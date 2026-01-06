@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cosmic Records</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              mono: ['JetBrains Mono', 'monospace'],
+            },
+            colors: {
+              // App Chrome (Immutable)
+              chrome: {
+                bg: 'var(--c-chrome-bg)',
+                panel: 'var(--c-chrome-panel)',
+                border: 'var(--c-chrome-border)',
+                text: 'var(--c-chrome-text)',
+              },
+              // Content Area (Themeable via CSS vars)
+              background: 'var(--c-bg)',
+              surface: 'var(--c-surface)',
+              panel: 'var(--c-panel)',
+              border: 'var(--c-border)',
+              
+              // Text (Themeable)
+              foreground: 'var(--c-text)',
+              muted: 'var(--c-text-muted)',
+              faint: 'var(--c-text-faint)',
+              
+              // Accents (Themeable)
+              accent: 'var(--c-accent)',
+              'accent-glow': 'var(--c-accent-glow)',
+              
+              // Status (Fixed)
+              success: 'var(--c-success)',
+              warning: 'var(--c-warning)',
+              danger: 'var(--c-danger)',
+            },
+            boxShadow: {
+              'glow': '0 0 10px var(--c-accent-glow)',
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      :root {
+        /* --- DARK COSMOS BASE TOKENS --- */
+        
+        /* Chrome Layers (Sidebar, Rail, Global Headers) */
+        --c-chrome-bg: #09090b;      /* Zinc 950 */
+        --c-chrome-panel: #18181b;   /* Zinc 900 */
+        --c-chrome-border: #27272a;  /* Zinc 800 */
+        --c-chrome-text: #e4e4e7;    /* Zinc 200 */
+
+        /* Content Base Defaults (Matches Chrome initially) */
+        --c-bg: #09090b;
+        --c-panel: #18181b;
+        --c-surface: #27272a;        /* Zinc 800 */
+        --c-border: #27272a;
+        
+        /* Text */
+        --c-text: #e4e4e7;           /* Zinc 200 */
+        --c-text-muted: #a1a1aa;     /* Zinc 400 */
+        --c-text-faint: #52525b;     /* Zinc 600 */
+
+        /* States */
+        --c-hover: rgba(255, 255, 255, 0.03);
+        --c-active: rgba(255, 255, 255, 0.08);
+        --c-focus-ring: #38bdf8;
+        
+        /* Accents */
+        --c-accent: #38bdf8;         /* Sky 400 */
+        --c-accent-glow: rgba(56, 189, 248, 0.2);
+        
+        /* Status */
+        --c-success: #34d399;        /* Emerald 400 */
+        --c-warning: #fbbf24;        /* Amber 400 */
+        --c-danger: #f87171;         /* Red 400 */
+
+        /* Spacing & Radius */
+        --r-sm: 4px;
+        --r-md: 8px;
+        --r-lg: 12px;
+      }
+
+      body {
+        background-color: var(--c-chrome-bg);
+        color: var(--c-chrome-text);
+        overflow: hidden;
+        -webkit-font-smoothing: antialiased;
+      }
+      
+      /* Global Focus Styles */
+      :focus-visible {
+        outline: 2px solid var(--c-focus-ring);
+        outline-offset: 2px;
+        border-radius: 2px;
+      }
+
+      /* Custom thin scrollbar */
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      ::-webkit-scrollbar-thumb { background: var(--c-chrome-border); border-radius: 3px; }
+      ::-webkit-scrollbar-thumb:hover { background: var(--c-text-faint); }
+      
+      .no-scrollbar::-webkit-scrollbar { display: none; }
+      .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+      /* Utility Helper Classes */
+      .bg-glass {
+        background: rgba(9, 9, 11, 0.7);
+        backdrop-filter: blur(12px);
+      }
+      
+      /* Starry Background (Applied to Map or Note Editor) */
+      .bg-deep-space {
+        background-color: var(--c-chrome-bg);
+        background-image: 
+          /* Nebula/Glow */
+          radial-gradient(circle at 50% 50%, rgba(30, 30, 45, 0.3) 0%, transparent 100%),
+          /* Stars Small */
+          radial-gradient(1.5px 1.5px at 10% 10%, rgba(255,255,255,0.2) 1px, transparent 0),
+          /* Stars Medium */
+          radial-gradient(1px 1px at 20% 20%, rgba(255,255,255,0.15) 1px, transparent 0),
+          /* Stars Scattered */
+          radial-gradient(2px 2px at 40% 40%, rgba(255,255,255,0.1) 1px, transparent 0),
+           /* Stars Dense */
+          radial-gradient(1.5px 1.5px at 50% 50%, rgba(255,255,255,0.1) 1px, transparent 0),
+           /* Stars Dense 2 */
+          radial-gradient(1px 1px at 80% 80%, rgba(255,255,255,0.15) 1px, transparent 0);
+        background-size: 100% 100%, 550px 550px, 350px 350px, 250px 250px, 300px 300px, 600px 600px;
+        background-repeat: repeat;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "d3": "https://esm.sh/d3@^7.9.0",
+    "@dnd-kit/core": "https://esm.sh/@dnd-kit/core@^6.1.0",
+    "@dnd-kit/sortable": "https://esm.sh/@dnd-kit/sortable@^8.0.0",
+    "@dnd-kit/utilities": "https://esm.sh/@dnd-kit/utilities@^3.2.2"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
