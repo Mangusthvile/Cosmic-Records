@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { Note, NoteType, NoteStatus, Workspace, UniverseTag } from '../types';
 import { Save, RefreshCw, Volume2, Plus, Box, Hash, Clock, CheckCircle, AlertTriangle, XCircle, Beaker, Bold, Italic, Link as LinkIcon, List, Image as ImageIcon, MoreHorizontal, LayoutTemplate, Loader, Globe, AlertOctagon, ChevronDown, ChevronRight, Archive, Sparkles, Folder } from 'lucide-react';
@@ -232,8 +233,8 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note, workspace, onUpdate, onGe
                         onChange={handleUniverseChange}
                       >
                           <option value="none">None (Cosmos)</option>
-                          {(Object.values(workspace.universe_tags) as UniverseTag[]).map(u => (
-                              <option key={u.id} value={u.id}>{u.name}</option>
+                          {workspace.settings.universeTags.tags.map(tag => (
+                              <option key={tag} value={tag}>{tag}</option>
                           ))}
                       </select>
                   </div>

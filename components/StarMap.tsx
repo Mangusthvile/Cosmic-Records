@@ -1,6 +1,7 @@
+
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { Workspace, Note, UniverseTag } from '../types';
+import { Workspace, Note } from '../types';
 
 interface StarMapProps {
   workspace: Workspace;
@@ -41,23 +42,23 @@ const StarMap: React.FC<StarMapProps> = ({ workspace, onSelectNote }) => {
     const styles = getComputedStyle(document.documentElement);
     const accentColor = styles.getPropertyValue('--accent').trim();
     const warnColor = styles.getPropertyValue('--warn').trim();
-    const textColor = styles.getPropertyValue('--text').trim();
     const faintColor = styles.getPropertyValue('--text-3').trim();
 
-    // 1. Build Hierarchy Data
-    const universeTags = Object.values(workspace.universe_tags) as UniverseTag[];
+    // 1. Build Hierarchy Data from Persistence
+    // Uses settings.universeTags strings
+    const universeTags = workspace.settings.universeTags.tags;
     const notes = Object.values(workspace.notes) as Note[];
 
     const hierarchyData: HierarchyDatum = {
         id: 'root',
         name: 'The Cosmos',
         type: 'root',
-        children: universeTags.map(u => {
-            const notesInUniverse = notes.filter(n => n.universe_tag_id === u.id && n.type === 'place');
+        children: universeTags.map(tag => {
+            const notesInUniverse = notes.filter(n => n.universeTag === tag && n.type === 'Place');
             
             return {
-                id: u.id,
-                name: u.name,
+                id: tag,
+                name: tag,
                 type: 'universe',
                 children: notesInUniverse.map(n => ({
                     id: n.id,
@@ -70,6 +71,9 @@ const StarMap: React.FC<StarMapProps> = ({ workspace, onSelectNote }) => {
         })
     };
     
+    // Add nodes without universe tag to a "Cosmos" or "Uncharted" group if needed, 
+    // but for now only showing explicit tags as per map logic.
+
     const root = d3.hierarchy<HierarchyDatum>(hierarchyData)
         .sum(d => d.value || 1)
         .sort((a, b) => (b.value || 0) - (a.value || 0));
@@ -92,9 +96,15 @@ const StarMap: React.FC<StarMapProps> = ({ workspace, onSelectNote }) => {
       .on("zoom", (event) => g.attr("transform", event.transform));
     svg.call(zoom);
 
+    // Initial View State from Maps Config (if available)
+    // const mainMap = workspace.maps.maps['main'];
+    // if (mainMap) {
+    //    svg.call(zoom.transform, d3.zoomIdentity.translate(mainMap.viewState.panX, mainMap.viewState.panY).scale(mainMap.viewState.zoom));
+    // }
+
     // Nodes
     const node = g.selectAll("g")
-        .data(rootNode.descendants().slice(1)) // Skip root (Cosmos)
+        .data(rootNode.descendants().slice(1)) // Skip root
         .join("g")
         .attr("transform", d => `translate(${d.x},${d.y})`);
 
@@ -103,7 +113,7 @@ const StarMap: React.FC<StarMapProps> = ({ workspace, onSelectNote }) => {
         .attr("r", d => d.r)
         .attr("fill", d => {
             if (d.data.type === 'universe') return "transparent"; 
-            if (d.data.type === 'place') return `${warnColor}20`; // Hex opacity 20
+            if (d.data.type === 'place') return `${warnColor}20`; 
             return faintColor;
         })
         .attr("stroke", d => {
@@ -134,13 +144,13 @@ const StarMap: React.FC<StarMapProps> = ({ workspace, onSelectNote }) => {
         .style("text-transform", "uppercase")
         .style("letter-spacing", "1px");
 
-  }, [workspace, dimensions]); // Re-run when workspace or dim changes. Note: Doesn't auto re-run on theme change unless forced, but acceptable for now.
+  }, [workspace, dimensions]);
 
   return (
     <div ref={wrapperRef} className="w-full h-full bg-deep-space relative overflow-hidden">
         <div className="absolute top-4 left-4 z-10">
             <h2 className="text-sm font-bold text-faint uppercase tracking-widest">Cosmos Topology</h2>
-            <p className="text-[10px] text-muted">Only showing notes with explicit Universe Tags.</p>
+            <p className="text-[10px] text-muted">Visualizing {workspace.settings.universeTags.tags.length} universes.</p>
         </div>
         <svg ref={svgRef} className="w-full h-full" />
     </div>

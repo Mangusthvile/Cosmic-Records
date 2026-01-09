@@ -2,7 +2,7 @@
 import { 
   Workspace, Note, NoteType, NoteStatus, 
   NoteMetadata, CharacterMeta, PlaceMeta, GeneralMeta,
-  ID, RichDoc, UserPreferences, StarMapData, GlossaryTerm, UniverseTag, Folder, Collection,
+  ID, RichDoc, UserPreferences, GlossaryTerm, UniverseTag, Folder, Collection,
   NotificationLogItem
 } from "../types";
 import { parseWikiLinks, rewriteLinks, extractLinkTitles } from "./linkService";
@@ -21,24 +21,6 @@ const createDefaultPreferences = (): UserPreferences => ({
   ai: { proactive: true, allow_auto_edits: false, remember_preferences: true },
   tts: { mode: "selected_text_only" },
   ui: { gray_out_outdated_titles: true, show_badges_in_search: true, show_unresolved_prominently: true }
-});
-
-const createDefaultMap = (): StarMapData => ({
-    id: generateId(),
-    root_layer_id: "root",
-    layers: {
-        "root": {
-            id: "root",
-            scale: "cosmos",
-            place_note_id: "",
-            node_ids: [],
-            zoom_targets: {},
-            created_at: new Date().toISOString()
-        }
-    },
-    nodes: {},
-    edges: {},
-    ui: { active_layer_id: "root", selected_node_id: null }
 });
 
 const SYSTEM_FOLDERS: Record<ID, Folder> = {
@@ -379,7 +361,9 @@ export const createTag = (workspace: Workspace, tagName: string): ID => {
 };
 
 export const createUniverseTag = (workspace: Workspace, name: string): ID => {
-    const id = generateId();
-    workspace.universe_tags[id] = { id, name, color: null, created_at: new Date().toISOString() };
-    return id;
+    // Check if exists in settings
+    if (!workspace.settings.universeTags.tags.includes(name)) {
+        workspace.settings.universeTags.tags.push(name);
+    }
+    return name; // Return name as ID since they are strings now
 };

@@ -1,5 +1,6 @@
+
 import React from 'react';
-import { Workspace, Note } from '../../types';
+import { Workspace, Note, UnresolvedOrigin } from '../../types';
 import { Link2, AlertTriangle, ArrowRight } from 'lucide-react';
 import { extractLinkTitles } from '../../services/linkService';
 
@@ -18,10 +19,8 @@ const BacklinksWidget: React.FC<BacklinksWidgetProps> = ({ note, workspace, onOp
     const incomingIds = workspace.indexes.backlinks[note.id] || [];
     const incomingNotes = incomingIds.map(id => workspace.notes[id]).filter(Boolean);
 
-    // 2. Unresolved Sources
-    const unresolvedSources = note.unresolved && note.unresolvedSources 
-        ? note.unresolvedSources.map(id => workspace.notes[id]).filter(Boolean)
-        : [];
+    // 2. Unresolved Sources (Persisted Metadata)
+    const origins = (note.system?.unresolvedOrigins || []) as UnresolvedOrigin[];
 
     // 3. Outgoing Unresolved Links
     const outgoingTitles = extractLinkTitles(note.content || "");
@@ -43,15 +42,15 @@ const BacklinksWidget: React.FC<BacklinksWidgetProps> = ({ note, workspace, onOp
                     <div className="flex items-center gap-2 text-danger font-bold text-xs mb-1">
                         <AlertTriangle size={12} /> UNRESOLVED
                     </div>
-                    {unresolvedSources.length > 0 && (
+                    {origins.length > 0 && (
                         <div className="space-y-1 mt-2">
-                            {unresolvedSources.map(src => (
+                            {origins.map((src, idx) => (
                                 <div 
-                                    key={src.id}
-                                    onClick={() => onOpenNote(src.id)}
+                                    key={idx}
+                                    onClick={() => onOpenNote(src.sourceNoteId)}
                                     className="flex items-center gap-1 text-[10px] text-accent cursor-pointer hover:underline"
                                 >
-                                    <ArrowRight size={10} /> Spawned by {src.title}
+                                    <ArrowRight size={10} /> Created from {src.sourceNoteTitle}
                                 </div>
                             ))}
                         </div>

@@ -1,5 +1,6 @@
+
 import React from 'react';
-import { Workspace, Note } from '../types';
+import { Workspace, Note, UnresolvedOrigin } from '../types';
 import { Link2, AlertTriangle, ArrowRight, X } from 'lucide-react';
 import { extractLinkTitles } from '../services/linkService';
 
@@ -24,10 +25,8 @@ const BacklinksPanel: React.FC<BacklinksPanelProps> = ({ currentNote, workspace,
     const incomingIds = workspace.indexes.backlinks[currentNote.id] || [];
     const incomingNotes = incomingIds.map(id => workspace.notes[id]).filter(Boolean);
 
-    // 2. Unresolved Sources (If this note is unresolved)
-    const unresolvedSources = currentNote.unresolved && currentNote.unresolvedSources 
-        ? currentNote.unresolvedSources.map(id => workspace.notes[id]).filter(Boolean)
-        : [];
+    // 2. Unresolved Sources (Persisted Metadata)
+    const origins = (currentNote.system?.unresolvedOrigins || []) as UnresolvedOrigin[];
 
     // 3. Outgoing Unresolved Links (If this note points to unresolved stuff)
     const outgoingTitles = extractLinkTitles(currentNote.content || "");
@@ -66,17 +65,17 @@ const BacklinksPanel: React.FC<BacklinksPanelProps> = ({ currentNote, workspace,
                         <div className="text-[10px] text-muted mb-2">
                             This note was auto-created from a link.
                         </div>
-                        {unresolvedSources.length > 0 && (
+                        {origins.length > 0 && (
                             <div>
-                                <div className="text-[10px] uppercase text-faint font-bold mb-1">Spawned By:</div>
+                                <div className="text-[10px] uppercase text-faint font-bold mb-1">Created From:</div>
                                 <div className="space-y-1">
-                                    {unresolvedSources.map(src => (
+                                    {origins.map((src, idx) => (
                                         <div 
-                                            key={src.id}
-                                            onClick={() => onOpenNote(src.id)}
+                                            key={idx}
+                                            onClick={() => onOpenNote(src.sourceNoteId)}
                                             className="flex items-center gap-1 text-xs text-accent cursor-pointer hover:underline"
                                         >
-                                            <ArrowRight size={10} /> {src.title}
+                                            <ArrowRight size={10} /> {src.sourceNoteTitle}
                                         </div>
                                     ))}
                                 </div>

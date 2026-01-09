@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Note, Workspace, PaneState, PaneId, UIState, MissingTab, NoteTab, SidebarState, NavigationState, WidgetSystemState, NotificationLogItem } from './types';
-import { createNote, updateNote, logNotification } from './services/storageService'; // Logic helpers only
+import { Note, Workspace, PaneState, PaneId, UIState, MissingTab, NoteTab, SidebarState, NavigationState, WidgetSystemState, NotificationLogItem, SearchFilters } from './types';
+import { createNote, updateNote, logNotification } from './services/storageService'; 
 import { vaultService } from './services/vaultService';
 import { generateTitle } from './services/geminiService';
 import Layout from './components/Layout';
@@ -13,7 +13,26 @@ import VaultPicker from './components/VaultPicker';
 type VaultState = 'initializing' | 'no-vault' | 'active';
 
 const DEFAULT_SIDEBAR_STATE: SidebarState = { navWidth: 300, navCollapsed: false, widgetWidth: 340, widgetCollapsed: false };
-const DEFAULT_NAV_STATE: NavigationState = { selectedSection: null, folderOpenState: {} };
+
+const DEFAULT_SEARCH_FILTERS: SearchFilters = {
+    folderId: 'all',
+    includeSubfolders: true,
+    universeTagId: 'all',
+    type: 'all',
+    status: 'all',
+    unresolved: 'all'
+};
+
+const DEFAULT_NAV_STATE: NavigationState = { 
+    selectedSection: null, 
+    folderOpenState: {},
+    searchState: {
+        query: '',
+        filters: DEFAULT_SEARCH_FILTERS,
+        isFiltersOpen: false
+    }
+};
+
 const DEFAULT_WIDGET_STATE: WidgetSystemState = { openWidgetIds: ['outline', 'backlinks'], widgetStates: {} };
 
 const App: React.FC = () => {
@@ -35,27 +54,19 @@ const App: React.FC = () => {
           const status = await vaultService.initialize();
           if (status === 'active') {
               try {
-                  // 1. Load Workspace
                   const ws = await vaultService.loadWorkspace();
-                  
-                  // 2. Load UI State
                   const uiState = await vaultService.loadUIState();
                   
-                  // 3. Restore / Resolve References
                   if (uiState) {
-                      // Resolve Tabs vs Workspace
                       let missingCount = 0;
-                      
                       Object.values(uiState.paneSystem.panes).forEach(pane => {
                           pane.tabs = pane.tabs.map(tab => {
                               if (tab.kind === 'note') {
                                   const noteTab = tab as NoteTab;
                                   const note = ws.notes[noteTab.payload.noteId];
                                   if (note) {
-                                      // Update title in case it changed
                                       return { ...tab, title: note.title };
                                   } else {
-                                      // Convert to Missing
                                       missingCount++;
                                       logNotification(ws, 'warning', `Restored workspace referenced missing note: ${tab.title || noteTab.payload.noteId}`, undefined);
                                       return {
@@ -74,19 +85,18 @@ const App: React.FC = () => {
                           });
                       });
 
-                      // Hydrate React States
                       paneSystem.restoreState(uiState.paneSystem);
                       setSidebarState(uiState.layout || DEFAULT_SIDEBAR_STATE);
-                      setNavState(uiState.navigation || DEFAULT_NAV_STATE);
+                      
+                      // Merge nav state to ensure new properties like searchState exist
+                      setNavState({ ...DEFAULT_NAV_STATE, ...(uiState.navigation || {}) });
+                      
                       setWidgetState(uiState.widgets || DEFAULT_WIDGET_STATE);
 
-                      // If missing references found, save the log update
                       if (missingCount > 0) {
                           vaultService.onWorkspaceChange(ws); 
                       }
                   } else {
-                      // Fallback: Default State (Single empty pane)
-                      // Initial Tab Check logic from before moved here
                       const notes = (Object.values(ws.notes) as Note[]).sort((a, b) => b.updatedAt - a.updatedAt);
                       if (notes.length > 0) {
                           paneSystem.openNoteTab(notes[0].id, notes[0].title);
@@ -109,7 +119,6 @@ const App: React.FC = () => {
   }, []);
 
   // --- Persistence: UI State ---
-  // We use a dedicated effect to aggregate and save UI State changes
   useEffect(() => {
       if (vaultState === 'active' && workspace) {
           const currentUIState: UIState = {
@@ -127,39 +136,57 @@ const App: React.FC = () => {
 
   // --- Handlers for Vault Picker ---
   const handleVaultReady = async () => {
-      // Reload page to trigger full init cycle cleanly or re-run init logic
-      // For SPA smoothness, we re-run init logic mostly
       const ws = await vaultService.loadWorkspace();
       setWorkspace(ws);
       setVaultState('active');
-      // Note: In real app we'd reuse the restoration logic above, duplicate for MVP safety or extract method
-      // For now, simpler to reload window if this was a real deployed app, but here we just set active.
-      // Falls back to defaults.
       paneSystem.openStarMapTab(); 
   };
 
   // --- Sync Effects ---
-
-  // Save Workspace Metadata on change via Service Debounce
   useEffect(() => {
     if (workspace && vaultState === 'active') {
         vaultService.onWorkspaceChange(workspace);
     }
   }, [workspace, vaultState]);
 
-  // Global Keyboard Shortcuts
+  // --- Global Keyboard Shortcuts ---
+  // Uses hotkeys.json bindings if available
   useEffect(() => {
+      if (!workspace) return;
+
       const handleGlobalKeyDown = (e: KeyboardEvent) => {
-          // New Note: Ctrl/Cmd + N
-          if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+          const { bindings } = workspace.hotkeys;
+          
+          const match = bindings.find(b => {
+              if (!b.enabled) return false;
+              
+              const parts = b.keys.toLowerCase().split('+');
+              const key = parts.pop();
+              const mod = parts.includes('mod') || parts.includes('ctrl') || parts.includes('cmd');
+              const shift = parts.includes('shift');
+              const alt = parts.includes('alt');
+
+              const eventMod = e.metaKey || e.ctrlKey;
+              return e.key.toLowerCase() === key && eventMod === mod && e.shiftKey === shift && e.altKey === alt;
+          });
+
+          if (match) {
               e.preventDefault();
-              setCreationTargetFolderId('inbox');
-              setIsCreationModalOpen(true);
+              switch(match.command) {
+                  case 'note.new':
+                      setCreationTargetFolderId('inbox');
+                      setIsCreationModalOpen(true);
+                      break;
+                  case 'tab.close':
+                      // Logic handled in PaneSystem via dedicated hook, but global dispatch could go here if centralized
+                      break;
+                  // Add other global commands here if not handled locally by focused elements
+              }
           }
       };
       window.addEventListener('keydown', handleGlobalKeyDown);
       return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, []);
+  }, [workspace]);
 
   // Sync tab titles active logic
   useEffect(() => {
@@ -210,13 +237,8 @@ const App: React.FC = () => {
     setWorkspace(prev => {
         if (!prev) return null;
         let nextWorkspace = updatedWorkspace ? { ...updatedWorkspace } : { ...prev };
-        
-        // Logical Update (Renaming, linking indexes)
         nextWorkspace = updateNote(nextWorkspace, updatedNote);
-        
-        // Persist Note
         vaultService.onNoteChange(updatedNote);
-
         return nextWorkspace;
     });
   };
@@ -233,14 +255,8 @@ const App: React.FC = () => {
   const handleOpenNote = (id: string) => {
       const note = workspace.notes[id];
       if (note) {
-          // Trigger content load if needed
           vaultService.ensureNoteContent(id).then(content => {
-              // We could force an update here if needed, but usually the editor handles it via `note` prop if it's referentially stable or if we update workspace.
-              // For now, ensureNoteContent updates the object in memory cache.
-              // We might need to force re-render if the user is ALREADY looking at it.
-              // But handleOpenNote usually implies navigating TO it.
               if (note.content !== content) {
-                  // Content loaded late
                    setWorkspace(prev => prev ? ({...prev, notes: {...prev.notes, [id]: {...note, content}}}) : null);
               }
           });
@@ -294,6 +310,7 @@ const App: React.FC = () => {
             isOpen={isCreationModalOpen}
             onClose={() => setIsCreationModalOpen(false)}
             onCreate={handleCreateNoteConfirm}
+            workspace={workspace}
         />
     </>
   );

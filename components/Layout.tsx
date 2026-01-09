@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Workspace, Note, Folder, SearchFilters, Tab, SidebarState, NavigationState, WidgetSystemState } from '../types';
-import { Globe, Plus, Search, Star, FolderOpen, PanelRightClose, PanelLeftClose, PanelRightOpen, PanelLeftOpen, Settings, ChevronRight, ChevronDown, Pin, Inbox, Archive, Clock, FileText, X, Filter, FilePlus, FolderPlus, ArrowDownUp, ChevronsUp, Check, AlertTriangle } from 'lucide-react';
+import { Globe, Plus, Search, Star, FolderOpen, PanelRightClose, PanelLeftClose, PanelRightOpen, PanelLeftOpen, Settings, ChevronRight, ChevronDown, Pin, Inbox, Archive, Clock, FileText, X, Filter, FilePlus, FolderPlus, ArrowDownUp, ChevronsUp, Check, AlertTriangle, AlertCircle } from 'lucide-react';
 import { createFolder, deleteFolder, moveNote, togglePin, renameFolder } from '../services/storageService';
 import { searchNotes, SearchResult } from '../services/searchService';
 import SettingsModal from './SettingsModal';
@@ -50,7 +50,8 @@ const DEFAULT_FILTERS: SearchFilters = {
     includeSubfolders: true,
     universeTagId: 'all',
     type: 'all',
-    status: 'all'
+    status: 'all',
+    unresolved: 'all'
 };
 
 // --- Helper: Resizer Component ---
@@ -101,10 +102,11 @@ const Layout: React.FC<LayoutProps> = ({
   // --- State: Content ---
   const [activeNavTab, setActiveNavTab] = useState<'files' | 'search' | 'map'>('files');
   
-  // --- State: Search ---
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchFilters, setSearchFilters] = useState<SearchFilters>(DEFAULT_FILTERS);
-  const [isSearchFiltersOpen, setIsSearchFiltersOpen] = useState(false);
+  // --- State: Search (Persistent) ---
+  const initialSearch = initialNavState.searchState || { query: '', filters: DEFAULT_FILTERS, isFiltersOpen: false };
+  const [searchQuery, setSearchQuery] = useState(initialSearch.query);
+  const [searchFilters, setSearchFilters] = useState<SearchFilters>(initialSearch.filters);
+  const [isSearchFiltersOpen, setIsSearchFiltersOpen] = useState(initialSearch.isFiltersOpen);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
 
   // --- State: Sort ---
@@ -129,6 +131,11 @@ const Layout: React.FC<LayoutProps> = ({
   
   useEffect(() => { onNavChange({ folderOpenState }); }, [folderOpenState]);
   useEffect(() => { onNavChange({ selectedSection }); }, [selectedSection]);
+  
+  // Persist Search State
+  useEffect(() => {
+      onNavChange({ searchState: { query: searchQuery, filters: searchFilters, isFiltersOpen: isSearchFiltersOpen } });
+  }, [searchQuery, searchFilters, isSearchFiltersOpen]);
 
   // --- Click Outside Sort Menu ---
   useEffect(() => {
@@ -145,8 +152,17 @@ const Layout: React.FC<LayoutProps> = ({
   useEffect(() => {
       if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
       
+      // Debounce search
       searchTimeoutRef.current = setTimeout(() => {
-          if (searchQuery || isSearchFiltersOpen) { // Only search if query exists or user is messing with filters
+          // Trigger search if query exists or ANY filter is active (not default)
+          const hasActiveFilters = 
+              searchFilters.folderId !== 'all' || 
+              searchFilters.type !== 'all' || 
+              searchFilters.status !== 'all' || 
+              searchFilters.universeTagId !== 'all' ||
+              searchFilters.unresolved !== 'all';
+
+          if (searchQuery || hasActiveFilters) {
               const results = searchNotes(workspace, searchQuery, searchFilters);
               setSearchResults(results);
           } else {
@@ -157,12 +173,12 @@ const Layout: React.FC<LayoutProps> = ({
       return () => { if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current); };
   }, [searchQuery, searchFilters, workspace]); 
 
-  const isSearchMode = !!searchQuery || (isSearchFiltersOpen && (searchFilters.folderId !== 'all' || searchFilters.type !== 'all' || searchFilters.status !== 'all' || searchFilters.universeTagId !== 'all'));
+  const isSearchMode = !!searchQuery || (searchFilters.folderId !== 'all' || searchFilters.type !== 'all' || searchFilters.status !== 'all' || searchFilters.universeTagId !== 'all' || searchFilters.unresolved !== 'all');
 
   const handleClearSearch = () => {
       setSearchQuery('');
       setSearchFilters(DEFAULT_FILTERS);
-      setIsSearchFiltersOpen(false);
+      // Keep filter panel open if it was open, user might want to re-filter
   };
 
   // --- Logic ---
@@ -229,25 +245,29 @@ const Layout: React.FC<LayoutProps> = ({
   };
 
   // --- Sorting Helper ---
-  const getSortedItems = <T extends Note | Folder>(items: T[], type: 'note' | 'folder'): T[] => {
+  const getSortedItems = <T extends Note | Folder>(items: T[], itemType: 'note' | 'folder'): T[] => {
       return [...items].sort((a, b) => {
+          // Use any cast to avoid TS unknown inference issues
+          const itemA = a as any;
+          const itemB = b as any;
+
           // Name Sort
           if (sortOrder === 'name-asc') {
-              const na = type === 'note' ? (a as unknown as Note).title : (a as unknown as Folder).name;
-              const nb = type === 'note' ? (b as unknown as Note).title : (b as unknown as Folder).name;
+              const na = itemType === 'note' ? itemA.title : itemA.name;
+              const nb = itemType === 'note' ? itemB.title : itemB.name;
               return na.localeCompare(nb);
           }
           if (sortOrder === 'name-desc') {
-              const na = type === 'note' ? (a as unknown as Note).title : (a as unknown as Folder).name;
-              const nb = type === 'note' ? (b as unknown as Note).title : (b as unknown as Folder).name;
+              const na = itemType === 'note' ? itemA.title : itemA.name;
+              const nb = itemType === 'note' ? itemB.title : itemB.name;
               return nb.localeCompare(na);
           }
 
           // Time Sort
-          const ta = (a as unknown as {updatedAt: number}).updatedAt;
-          const tb = (b as unknown as {updatedAt: number}).updatedAt;
-          const ca = (a as unknown as {createdAt: number}).createdAt;
-          const cb = (b as unknown as {createdAt: number}).createdAt;
+          const ta = itemA.updatedAt;
+          const tb = itemB.updatedAt;
+          const ca = itemA.createdAt;
+          const cb = itemB.createdAt;
 
           if (sortOrder === 'modified-new') return tb - ta;
           if (sortOrder === 'modified-old') return ta - tb;
@@ -357,39 +377,66 @@ const Layout: React.FC<LayoutProps> = ({
 
   const renderSearchResults = () => {
       if (searchResults.length === 0) {
-          return <div className="p-4 text-center text-xs text-muted italic">No records found.</div>;
+          return <div className="p-4 text-center text-xs text-muted italic">No records found matching filters.</div>;
       }
 
       return (
           <div className="flex flex-col">
               <div className="px-3 py-2 text-[10px] font-bold uppercase text-faint tracking-widest flex justify-between">
                   <span>Results ({searchResults.length})</span>
-                  {searchFilters.status !== 'all' && <span className="text-accent">{searchFilters.status}</span>}
               </div>
               {searchResults.map(({ note, snippet, hasUnresolvedLinks }) => (
                   <div 
                     key={note.id}
                     onClick={() => onOpenNote(note.id)}
                     onContextMenu={(e) => handleContextMenu(e, 'note', note.id)}
-                    className="px-3 py-2 border-b border-border hover:bg-[var(--c-hover)] cursor-pointer group"
+                    className={`px-3 py-2 border-b border-border cursor-pointer group transition-all
+                        ${activeNoteId === note.id ? 'bg-[var(--c-active)] border-l-2 border-l-accent' : 'hover:bg-[var(--c-hover)]'}
+                        ${note.unresolved ? 'bg-danger/5' : ''}
+                    `}
                   >
                       <div className="flex items-center gap-2 mb-1">
+                          {/* Status Dot */}
                           <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
                                note.status === 'Canon' ? 'bg-success' :
                                note.status === 'Experimental' ? 'bg-warning' :
                                note.status === 'Draft' ? 'bg-zinc-500' : 'bg-slate-600'
                            }`}></span>
-                          <span className="text-xs font-bold text-foreground truncate flex-1">{note.title}</span>
+                          
+                          {/* Title */}
+                          <span className={`text-xs font-bold truncate flex-1 ${note.unresolved ? 'text-danger' : 'text-foreground'}`}>
+                              {note.title}
+                          </span>
+
+                          {/* Pinned Icon */}
+                          {note.pinned && <Pin size={10} className="text-accent" />}
+                          
+                          {/* Unresolved Badge */}
                           {note.unresolved && (
-                              <span className="text-[9px] bg-danger/20 text-danger px-1.5 py-0.5 rounded uppercase font-bold tracking-wide">Unresolved</span>
+                              <span className="text-[8px] bg-danger text-white px-1 py-0.5 rounded uppercase font-bold tracking-wide">UNRESOLVED</span>
                           )}
                       </div>
-                      <div className="text-[10px] text-muted line-clamp-2 leading-relaxed">
-                          {snippet}
+                      
+                      {/* Meta Line */}
+                      <div className="flex items-center gap-2 text-[9px] text-faint mb-1">
+                          <span className="uppercase">{note.type}</span>
+                          <span>•</span>
+                          <span>{workspace.folders[note.folderId]?.name || 'Unknown'}</span>
+                          {note.status === 'Experimental' && <span className="text-warning font-bold">⚠ EXP</span>}
+                          {note.status === 'Outdated' && <span className="text-muted line-through">OUTDATED</span>}
                       </div>
-                      {hasUnresolvedLinks && (
+
+                      {/* Snippet */}
+                      {snippet && (
+                          <div className="text-[10px] text-muted line-clamp-2 leading-relaxed font-mono opacity-80">
+                              {snippet}
+                          </div>
+                      )}
+                      
+                      {/* Link Warning */}
+                      {hasUnresolvedLinks && !note.unresolved && (
                           <div className="flex items-center gap-1 mt-1 text-[9px] text-warning font-medium">
-                              <AlertTriangle size={8} /> Has Unresolved Links
+                              <AlertCircle size={8} /> Missing Links
                           </div>
                       )}
                   </div>
@@ -422,14 +469,15 @@ const Layout: React.FC<LayoutProps> = ({
   const filteredList = (() => {
       if (!selectedSection) return null;
       let notes: Note[] = [];
-      const all = Object.values(workspace.notes) as Note[];
+      // Cast to Note[] to prevent "property does not exist on unknown" errors
+      const all = Object.values(workspace.notes) as Note[]; 
       switch(selectedSection) {
-          case 'pinned': notes = all.filter((n: Note) => n.pinned); break; // Use direct property
-          case 'recent': notes = [...all].sort((a: Note, b: Note) => b.updatedAt - a.updatedAt).slice(0, 20); break;
-          case 'inbox': notes = all.filter((n: Note) => n.folderId === 'inbox'); break;
-          case 'unresolved': notes = all.filter((n: Note) => n.unresolved || n.folderId === 'unresolved'); break;
-          case 'drafts': notes = all.filter((n: Note) => n.status === 'Draft'); break;
-          case 'archived': notes = all.filter((n: Note) => n.status === 'Archived' || n.folderId === 'archived'); break;
+          case 'pinned': notes = all.filter((n) => n.pinned); break; 
+          case 'recent': notes = [...all].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 20); break;
+          case 'inbox': notes = all.filter((n) => n.folderId === 'inbox'); break;
+          case 'unresolved': notes = all.filter((n) => n.unresolved || n.folderId === 'unresolved'); break;
+          case 'drafts': notes = all.filter((n) => n.status === 'Draft'); break;
+          case 'archived': notes = all.filter((n) => n.status === 'Archived' || n.folderId === 'archived'); break;
       }
       return getSortedItems(notes, 'note');
   })();
@@ -487,7 +535,7 @@ const Layout: React.FC<LayoutProps> = ({
   const getPinnedCount = () => {
       // workspace.pinnedNoteIds might be stale if we moved to property-based.
       // Filter directly from notes as source of truth.
-      return Object.values(workspace.notes).filter(n => n.pinned).length;
+      return (Object.values(workspace.notes) as Note[]).filter(n => n.pinned).length;
   };
 
   return (
@@ -563,12 +611,12 @@ const Layout: React.FC<LayoutProps> = ({
             </div>
             
             {/* SEARCH AREA */}
-            <div className="px-3 py-3 border-b border-chrome-border bg-chrome-panel">
-                 <div className="relative">
-                    <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted" />
+            <div className="border-b border-chrome-border bg-chrome-panel flex flex-col">
+                 <div className="px-3 py-3 relative">
+                    <Search size={14} className="absolute left-5 top-1/2 -translate-y-1/2 text-muted" />
                     <input 
                         className="w-full bg-surface border border-chrome-border rounded-md pl-8 pr-8 py-1.5 text-xs text-foreground focus:outline-none focus:border-accent transition-colors placeholder:text-muted"
-                        placeholder="Search vault..."
+                        placeholder="Search index..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
                         onFocus={() => { if(!searchQuery && !isSearchMode) setSearchQuery(''); }}
@@ -576,14 +624,14 @@ const Layout: React.FC<LayoutProps> = ({
                     {isSearchMode ? (
                          <button 
                             onClick={handleClearSearch}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-foreground"
+                            className="absolute right-5 top-1/2 -translate-y-1/2 text-muted hover:text-foreground"
                          >
                             <X size={12} />
                          </button>
                     ) : (
                         <button 
                             onClick={() => setIsSearchFiltersOpen(!isSearchFiltersOpen)}
-                            className={`absolute right-2 top-1/2 -translate-y-1/2 ${isSearchFiltersOpen ? 'text-accent' : 'text-muted hover:text-foreground'}`}
+                            className={`absolute right-5 top-1/2 -translate-y-1/2 ${isSearchFiltersOpen ? 'text-accent' : 'text-muted hover:text-foreground'}`}
                         >
                             <Filter size={12} />
                         </button>
@@ -592,10 +640,10 @@ const Layout: React.FC<LayoutProps> = ({
                  
                  {/* FILTERS PANEL */}
                  {isSearchFiltersOpen && (
-                     <div className="mt-3 space-y-2 animate-in slide-in-from-top-2 duration-200">
+                     <div className="px-3 pb-3 space-y-2 animate-in slide-in-from-top-2 duration-200 border-t border-chrome-border/50 pt-2 bg-surface/10">
                          {/* Folder Filter */}
                          <div className="flex flex-col gap-1">
-                             <label className="text-[10px] text-muted font-bold uppercase">Folder</label>
+                             <label className="text-[10px] text-muted font-bold uppercase">Folder Scope</label>
                              <select 
                                 className="bg-surface border border-border rounded px-2 py-1 text-[10px] text-foreground focus:outline-none"
                                 value={searchFilters.folderId}
@@ -611,8 +659,8 @@ const Layout: React.FC<LayoutProps> = ({
                              </select>
                          </div>
                          
-                         {/* Other Filters Row */}
                          <div className="grid grid-cols-2 gap-2">
+                             {/* Type */}
                              <div className="flex flex-col gap-1">
                                  <label className="text-[10px] text-muted font-bold uppercase">Type</label>
                                  <select 
@@ -621,14 +669,13 @@ const Layout: React.FC<LayoutProps> = ({
                                     onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSearchFilters(prev => ({ ...prev, type: e.target.value }))}
                                  >
                                      <option value="all">All Types</option>
-                                     <option value="General">General</option>
-                                     <option value="Character">Character</option>
-                                     <option value="Place">Place</option>
-                                     <option value="Item">Item</option>
-                                     <option value="Event">Event</option>
-                                     <option value="Lore">Lore</option>
+                                     {workspace.templates.noteTypes.map(t => (
+                                         <option key={t.typeId} value={t.typeId}>{t.name}</option>
+                                     ))}
                                  </select>
                              </div>
+                             
+                             {/* Status */}
                               <div className="flex flex-col gap-1">
                                  <label className="text-[10px] text-muted font-bold uppercase">Status</label>
                                  <select 
@@ -639,9 +686,41 @@ const Layout: React.FC<LayoutProps> = ({
                                      <option value="all">All Status</option>
                                      <option value="Draft">Draft</option>
                                      <option value="Canon">Canon</option>
-                                     <option value="Experimental">Experimental</option>
+                                     <option value="Experimental">Exp.</option>
                                      <option value="Outdated">Outdated</option>
                                      <option value="Archived">Archived</option>
+                                 </select>
+                             </div>
+                         </div>
+
+                         <div className="grid grid-cols-2 gap-2">
+                             {/* Universe */}
+                             <div className="flex flex-col gap-1">
+                                 <label className="text-[10px] text-muted font-bold uppercase">Universe</label>
+                                 <select 
+                                    className="bg-surface border border-border rounded px-2 py-1 text-[10px] text-foreground focus:outline-none"
+                                    value={searchFilters.universeTagId}
+                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSearchFilters(prev => ({ ...prev, universeTagId: e.target.value }))}
+                                 >
+                                     <option value="all">All Universes</option>
+                                     <option value="none">None (Cosmos)</option>
+                                     {workspace.settings.universeTags.tags.map(t => (
+                                         <option key={t} value={t}>{t}</option>
+                                     ))}
+                                 </select>
+                             </div>
+
+                             {/* Unresolved */}
+                             <div className="flex flex-col gap-1">
+                                 <label className="text-[10px] text-muted font-bold uppercase">Integrity</label>
+                                 <select 
+                                    className="bg-surface border border-border rounded px-2 py-1 text-[10px] text-foreground focus:outline-none"
+                                    value={searchFilters.unresolved}
+                                    onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSearchFilters(prev => ({ ...prev, unresolved: e.target.value as any }))}
+                                 >
+                                     <option value="all">All Notes</option>
+                                     <option value="unresolved">Unresolved Only</option>
+                                     <option value="resolved">Resolved Only</option>
                                  </select>
                              </div>
                          </div>
@@ -659,12 +738,12 @@ const Layout: React.FC<LayoutProps> = ({
                     <>
                         {/* SYSTEM SECTIONS */}
                         <div>
-                            {renderSystemSection('pinned', 'Pinned', Pin, (n: Note) => n.pinned, getPinnedCount())}
+                            {renderSystemSection('pinned', 'Pinned', Pin, (n) => n.pinned, getPinnedCount())}
                             {renderSystemSection('recent', 'Recent', Clock, () => false, undefined)}
-                            {renderSystemSection('inbox', 'Inbox', Inbox, (n: Note) => n.folderId === 'inbox')}
-                            {renderSystemSection('unresolved', 'Unresolved', AlertTriangle, (n: Note) => n.unresolved || n.folderId === 'unresolved')}
-                            {renderSystemSection('drafts', 'Drafts', FileText, (n: Note) => n.status === 'Draft')}
-                            {renderSystemSection('archived', 'Archived', Archive, (n: Note) => n.status === 'Archived' || n.folderId === 'archived')}
+                            {renderSystemSection('inbox', 'Inbox', Inbox, (n) => n.folderId === 'inbox')}
+                            {renderSystemSection('unresolved', 'Unresolved', AlertTriangle, (n) => n.unresolved || n.folderId === 'unresolved', workspace.indexes.unresolved_note_ids.length)}
+                            {renderSystemSection('drafts', 'Drafts', FileText, (n) => n.status === 'Draft')}
+                            {renderSystemSection('archived', 'Archived', Archive, (n) => n.status === 'Archived' || n.folderId === 'archived')}
                         </div>
                         <div className="h-[1px] bg-border mx-2"></div>
                         {/* LIST / TREE */}
@@ -695,7 +774,7 @@ const Layout: React.FC<LayoutProps> = ({
                                     .map(f => renderFolder(f, 0))
                                  }
                                  {/* Only show prompt if empty so they can get started, else the toolbar buttons are primary */}
-                                 {Object.values(workspace.folders).filter(f => f.type === 'user').length === 0 && (
+                                 {(Object.values(workspace.folders) as Folder[]).filter(f => f.type === 'user').length === 0 && (
                                      <div className="text-center py-4">
                                          <p className="text-[10px] text-muted mb-2">No folders yet.</p>
                                          <button onClick={handleCreateFolder} className="text-xs text-accent hover:underline">Create Folder</button>

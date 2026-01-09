@@ -24,6 +24,12 @@ export interface NoteBlock {
   marks?: any[]; // Reserved for future rich text marks
 }
 
+export interface UnresolvedOrigin {
+    sourceNoteId: string;
+    sourceNoteTitle: string;
+    createdAt: number;
+}
+
 export interface DiskNote {
   schemaVersion: number;
   noteId: string;
@@ -43,6 +49,7 @@ export interface DiskNote {
     custom: Record<string, any>;
     system: {
       showOnStarMap?: boolean;
+      unresolvedOrigins?: UnresolvedOrigin[];
       [key: string]: any;
     };
   };
@@ -81,6 +88,118 @@ export interface IndexData {
     notes: Record<string, IndexEntry>;
 }
 
+// --- CONFIGURATION SCHEMAS (Step 7) ---
+
+// 1. Settings
+export interface ValidationRule {
+    id: string;
+    enabled: boolean;
+    scope: string; // e.g. "global", "type:Character"
+    kind: "requiredField" | "warning" | "custom";
+    data: any;
+}
+
+export interface SettingsData {
+    schemaVersion: number;
+    updatedAt: number;
+    ui: {
+        theme: string;
+        reduceMotion: boolean;
+    };
+    universeTags: {
+        tags: string[];
+        defaultTag: string | null;
+    };
+    notes: {
+        defaultFolderId: string;
+        defaultStatus: NoteStatus;
+        renameUpdatesWikiLinks: boolean;
+    };
+    validation: {
+        strictMode: boolean;
+        rules: ValidationRule[];
+    };
+}
+
+// 2. Templates
+export interface NoteTemplate {
+    templateId: string;
+    name: string;
+    kind: "blank" | "structured";
+    contentBlocks: any[];
+}
+
+export interface AIInterviewTemplate {
+    templateId: string;
+    name: string;
+    questions: { id: string; text: string; kind: string; options?: string[] }[];
+    outputPlan: any;
+}
+
+export interface NoteTypeDefinition {
+    typeId: string; // e.g. "General", "Character"
+    name: string;
+    defaultTemplateId: string;
+    templates: NoteTemplate[];
+    aiInterviewTemplates: AIInterviewTemplate[];
+    icon?: string; // Optional UI hint
+    description?: string; // Optional UI hint
+}
+
+export interface TemplatesData {
+    schemaVersion: number;
+    updatedAt: number;
+    noteTypes: NoteTypeDefinition[];
+    lastUsed: {
+        typeId: string;
+    };
+}
+
+// 3. Hotkeys
+export interface KeyBinding {
+    command: string;
+    keys: string;
+    enabled: boolean;
+    label?: string; // For UI display
+}
+
+export interface HotkeysData {
+    schemaVersion: number;
+    updatedAt: number;
+    bindings: KeyBinding[];
+}
+
+// 4. Maps
+export interface MapNodeStyle {
+    shape: "circle" | "ring" | "bubble" | "symbol";
+    icon: string;
+    color: string;
+}
+
+export interface MapNodeData {
+    id: string;
+    noteId: string; // Link to note
+    x: number;
+    y: number;
+    style: MapNodeStyle;
+}
+
+export interface MapData {
+    mapId: string;
+    name: string;
+    createdAt: number;
+    updatedAt: number;
+    viewState: { zoom: number; panX: number; panY: number };
+    nodes: MapNodeData[];
+    areas: any[];
+}
+
+export interface MapsData {
+    schemaVersion: number;
+    updatedAt: number;
+    maps: Record<string, MapData>;
+}
+
 // --- WIDGET TYPES ---
 export type WidgetId = 'outline' | 'backlinks' | 'glossary' | 'ai_chat' | 'notifications';
 
@@ -96,6 +215,7 @@ export interface SearchFilters {
     universeTagId: string | 'all' | 'none';
     type: string | 'all';
     status: string | 'all';
+    unresolved: 'all' | 'unresolved' | 'resolved'; // Enhanced from boolean
 }
 
 // --- PANE SYSTEM TYPES ---
@@ -196,6 +316,11 @@ export interface SidebarState {
 export interface NavigationState {
     selectedSection: string | null; // e.g. 'pinned', 'inbox', 'folder:123'
     folderOpenState: Record<string, boolean>;
+    searchState?: {
+        query: string;
+        filters: SearchFilters;
+        isFiltersOpen: boolean;
+    };
 }
 
 export interface UIState {
@@ -218,20 +343,22 @@ export interface Workspace {
   notes: Record<ID, Note>;
   folders: Record<ID, Folder>;
   collections: Record<ID, Collection>; // Shortcut groups
-  pinnedNoteIds: ID[]; // Legacy: Kept for compat, but Note.pinned is source of truth
+  pinnedNoteIds: ID[]; // Legacy: Kept for compat
   
-  // Legacy/Other entities (kept for compatibility)
+  // Configuration & Metadata (Persisted Files)
+  settings: SettingsData;
+  templates: TemplatesData;
+  hotkeys: HotkeysData;
+  maps: MapsData;
+
+  // Legacy/Other entities (kept for compatibility or specific module data)
   tags: Record<TagID, Tag>;
-  universe_tags: Record<UniverseTagID, UniverseTag>;
   glossary: {
     terms: Record<GlossaryTermID, GlossaryTerm>;
     extraction_queue: GlossaryExtractionItem[];
   };
-  templates: {
-    character_templates: Record<TemplateID, CharacterTemplate>;
-    place_templates: Record<TemplateID, PlaceTemplate>;
-  };
-  map: StarMapData; 
+  
+  // Runtime Indexes
   indexes: {
     title_to_note_id: Record<string, ID>;
     unresolved_note_ids: ID[];
@@ -239,10 +366,10 @@ export interface Workspace {
     backlinks: Record<ID, ID[]>; // targetNoteId -> list of sourceNoteIds
     note_files?: Record<ID, { fileName: string, folderPath: string }>; // In-memory index for file resolution
   };
-  // Deprecated singular notification list in favor of log, but kept for schema compatibility
+  
   notifications: Record<NotificationID, Notification>;
   notificationLog: NotificationLogItem[]; 
-  user_preferences: UserPreferences;
+  user_preferences: UserPreferences; // Kept for legacy compat, but source is settings.json
 
   created_at: ISODate;
   updated_at: ISODate;
@@ -257,7 +384,7 @@ export interface Note {
   
   unresolved: boolean;
   unresolvedSources?: string[]; // IDs of notes that spawned this unresolved note
-  universeTag: string | null; // ID or null (None)
+  universeTag: string | null; // Name string or null
   folderId: string; // default Inbox
   
   createdAt: Timestamp;
@@ -269,6 +396,7 @@ export interface Note {
   
   // Optional / Legacy / Metadata
   metadata?: any; 
+  system?: any; // System properties like unresolvedOrigins
   aiInterview?: AIInterviewState; // Stub for AI flow
   
   // Visuals (Legacy support)
@@ -277,7 +405,7 @@ export interface Note {
   
   // Legacy fields to be deprecated or mapped
   tag_ids: TagID[];
-  universe_tag_id?: UniverseTagID | null; // Mapped to universeTag
+  universe_tag_id?: UniverseTagID | null; // Legacy mapped
   content_plain?: string; // Mapped to content
 }
 
@@ -437,6 +565,7 @@ export interface Tag {
   created_at: ISODate;
 }
 
+// Legacy Interface: kept but data source is now settings.universeTags
 export interface UniverseTag {
   id: UniverseTagID;
   name: string;      
@@ -493,56 +622,6 @@ export interface PlaceTemplate {
   updated_at: ISODate;
 }
 
-// 9. Star Map (Data)
-export interface StarMapData {
-  id: ID;
-  root_layer_id: ID;            
-  layers: Record<ID, MapLayer>; 
-  nodes: Record<MapNodeID, MapNode>;
-  edges: Record<ID, MapEdge>;
-  ui: {
-    active_layer_id: ID;
-    selected_node_id: MapNodeID | null;
-  };
-}
-
-export type MapLayerScale = "cosmos" | "universe" | "galaxy" | "cluster" | "system" | "planet" | "nation";
-
-export interface MapLayer {
-  id: ID;
-  scale: MapLayerScale;
-  place_note_id: ID;
-  node_ids: MapNodeID[];
-  zoom_targets: Record<MapNodeID, ID>; 
-  created_at: ISODate;
-}
-
-export interface MapNode {
-  id: MapNodeID;
-  label: string;
-  shape: "circle" | "ring" | "bubble" | "symbol";
-  color: string | null;
-  icon: string | null;
-  place_note_id: ID | null;
-  universe_tag_id: UniverseTagID | null;
-  filter: {
-    universe_tag_id: UniverseTagID | null;
-    additional_tag_ids: TagID[];
-  };
-  x: number;
-  y: number;
-  radius: number;
-  created_at: ISODate;
-}
-
-export interface MapEdge {
-  id: ID;
-  from_node_id: MapNodeID;
-  to_node_id: MapNodeID;
-  style: "line" | "curve";
-  color: string | null;
-}
-
 // 10. Notifications
 export interface Notification {
   id: NotificationID;
@@ -565,7 +644,7 @@ export interface NotificationLogItem {
     read: boolean;
 }
 
-// 11. User Preferences
+// 11. User Preferences (Legacy - now in settings.json)
 export interface UserPreferences {
   ai: {
     proactive: boolean;

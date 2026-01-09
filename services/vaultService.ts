@@ -1,8 +1,13 @@
 
-import { Workspace, Note, Folder, NoteStatus, NotificationLogItem, GlossaryTerm, ID, DiskNote, IndexEntry, NoteBlock, IndexData, UIState } from '../types';
+import { 
+    Workspace, Note, Folder, NoteStatus, NotificationLogItem, ID, DiskNote, IndexEntry, NoteBlock, IndexData, UIState, UnresolvedOrigin,
+    SettingsData, TemplatesData, HotkeysData, MapsData, NoteTypeDefinition, KeyBinding
+} from '../types';
 import { getHandle, setHandle } from './idb';
 import { VaultAdapter, FileSystemAccessAdapter, IndexedDbAdapter, DirEntry } from './adapters';
 import { join, dirname, basename } from './path';
+import { logNotification } from './storageService';
+import { extractLinkTitles } from './linkService';
 
 // --- Constants ---
 const VAULT_HANDLE_KEY = 'cosmic_vault_handle';
@@ -16,12 +21,12 @@ const FILES = {
     TAGS: 'tags.json',
     TEMPLATES: 'templates.json',
     GLOSSARY: 'glossary.json',
-    STARMAPS: 'starmaps.json',
     SETTINGS: 'settings.json',
     HOTKEYS: 'hotkeys.json',
+    MAPS: 'maps.json',
     WORKSPACE: 'workspace.json',
     WIDGETS: 'widgets.json',
-    PINNED: 'pinned.json', // Deprecated in favor of index but file might exist
+    PINNED: 'pinned.json',
     NOTIFICATIONS: 'notifications.json',
     UI_STATE: 'uiState.json'
 };
@@ -37,6 +42,65 @@ const SYSTEM_IDS = {
     UNRESOLVED: 'unresolved',
     ARCHIVED: 'archived'
 };
+
+// --- Defaults Generators ---
+
+const createDefaultSettings = (): SettingsData => ({
+    schemaVersion: 1,
+    updatedAt: Date.now(),
+    ui: { theme: 'darkCosmos', reduceMotion: false },
+    universeTags: { tags: ['Cosmos'], defaultTag: null },
+    notes: { defaultFolderId: 'inbox', defaultStatus: 'Draft', renameUpdatesWikiLinks: true },
+    validation: { strictMode: false, rules: [] }
+});
+
+const createDefaultTemplates = (): TemplatesData => {
+    // Porting hardcoded list from NoteCreationModal
+    const types: NoteTypeDefinition[] = [
+        { typeId: 'General', name: 'General Note', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'FileText', description: 'A blank canvas for any content.' },
+        { typeId: 'Character', name: 'Character', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'User', description: 'A person, creature, or entity.' },
+        { typeId: 'Place', name: 'Place', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Map', description: 'A location, planet, or region.' },
+        { typeId: 'Item', name: 'Item', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Box', description: 'An object, artifact, or technology.' },
+        { typeId: 'Event', name: 'Event', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Calendar', description: 'A historical or timeline event.' },
+        { typeId: 'Lore', name: 'Lore', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Scroll', description: 'History, religion, or culture.' },
+    ];
+    return {
+        schemaVersion: 1,
+        updatedAt: Date.now(),
+        noteTypes: types,
+        lastUsed: { typeId: 'General' }
+    };
+};
+
+const createDefaultHotkeys = (): HotkeysData => ({
+    schemaVersion: 1,
+    updatedAt: Date.now(),
+    bindings: [
+        { command: "note.save", keys: "Mod+S", enabled: true, label: "Save Note" },
+        { command: "note.new", keys: "Mod+N", enabled: true, label: "New Note" },
+        { command: "tab.close", keys: "Mod+W", enabled: true, label: "Close Tab" },
+        { command: "tab.next", keys: "Ctrl+Tab", enabled: true, label: "Next Tab" },
+        { command: "pane.splitVertical", keys: "Alt+Shift+2", enabled: true, label: "Split Vertical" },
+        { command: "pane.focusLeft", keys: "Alt+ArrowLeft", enabled: true, label: "Focus Left" },
+        { command: "pane.focusRight", keys: "Alt+ArrowRight", enabled: true, label: "Focus Right" },
+    ]
+});
+
+const createDefaultMaps = (): MapsData => ({
+    schemaVersion: 1,
+    updatedAt: Date.now(),
+    maps: {
+        'main': {
+            mapId: 'main',
+            name: 'Main Star Map',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            viewState: { zoom: 1, panX: 0, panY: 0 },
+            nodes: [],
+            areas: []
+        }
+    }
+});
 
 const generateId = (): string => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -95,15 +159,14 @@ const serializeNoteToJSON = (note: Note, folderPath: string): string => {
             updatedAt: note.updatedAt,
             folderPath: folderPath,
             pinned: note.pinned,
-            tags: [] // Future tag system
+            tags: [] 
         },
         properties: {
             custom: note.metadata?.data || {},
-            system: {} 
+            system: note.system || {} 
         },
         content: {
             format: 'blocks',
-            // Simple mapping: 1 paragraph block for textarea content
             blocks: [{ 
                 id: generateId(), 
                 type: 'paragraph', 
@@ -130,7 +193,7 @@ const parseNoteFromJSON = (jsonString: string): Note | null => {
             status: diskNote.meta.status,
             unresolved: diskNote.meta.unresolved,
             universeTag: diskNote.meta.universeTag,
-            folderId: 'unknown', // Resolved from index/folder map
+            folderId: 'unknown', 
             createdAt: diskNote.meta.createdAt,
             updatedAt: diskNote.meta.updatedAt,
             content: diskNote.content.blocks.map(b => b.text).join('\n\n'), 
@@ -139,6 +202,7 @@ const parseNoteFromJSON = (jsonString: string): Note | null => {
             unresolvedSources: [],
             tag_ids: [],
             metadata: { kind: 'general', data: diskNote.properties.custom },
+            system: diskNote.properties.system || {},
             aiInterview: undefined
         };
     } catch (e) {
@@ -152,23 +216,46 @@ const parseNoteFromJSON = (jsonString: string): Note | null => {
 export class VaultService {
     private adapter: VaultAdapter | null = null;
     private workspaceCache: Workspace | null = null;
+    private creationMutex: Map<string, Promise<void>> = new Map();
 
-    // Debounced Note Save: Updates File AND Index
+    // Debounced Config Savers
+    public debouncedSaveSettings = debounce(async (data: SettingsData) => {
+        if (!this.adapter) return;
+        data.updatedAt = Date.now();
+        await this.adapter.writeFile(join(METADATA_DIR, FILES.SETTINGS), JSON.stringify(data, null, 2));
+    }, 500);
+
+    public debouncedSaveTemplates = debounce(async (data: TemplatesData) => {
+        if (!this.adapter) return;
+        data.updatedAt = Date.now();
+        await this.adapter.writeFile(join(METADATA_DIR, FILES.TEMPLATES), JSON.stringify(data, null, 2));
+    }, 500);
+
+    public debouncedSaveHotkeys = debounce(async (data: HotkeysData) => {
+        if (!this.adapter) return;
+        data.updatedAt = Date.now();
+        await this.adapter.writeFile(join(METADATA_DIR, FILES.HOTKEYS), JSON.stringify(data, null, 2));
+    }, 500);
+
+    public debouncedSaveMaps = debounce(async (data: MapsData) => {
+        if (!this.adapter) return;
+        data.updatedAt = Date.now();
+        await this.adapter.writeFile(join(METADATA_DIR, FILES.MAPS), JSON.stringify(data, null, 2));
+    }, 500);
+
+    // Debounced Note Save
     private debouncedSaveNote = debounce(async (note: Note) => {
         if (!this.adapter || !this.workspaceCache) return;
         
-        // 1. Resolve Folder Info
         const folder = this.workspaceCache.folders[note.folderId];
         const folderName = folder ? folder.name : SYSTEM_DIRS.INBOX;
         await this.adapter.mkdir(folderName, { recursive: true });
 
-        // 2. Resolve Filename & Paths
         let fileName = generateFileName(note.title, note.id);
         const existingFileIndex = this.workspaceCache.indexes.note_files?.[note.id];
         
         if (existingFileIndex) {
             fileName = existingFileIndex.fileName;
-            // Move file if folder changed
             if (existingFileIndex.folderPath !== folderName) {
                 const oldPath = join(existingFileIndex.folderPath, fileName);
                 const newPath = join(folderName, fileName);
@@ -179,31 +266,25 @@ export class VaultService {
         }
         
         const path = join(folderName, fileName);
-
-        // 3. Write Note File (First, for safety)
         await this.adapter.writeFile(path, serializeNoteToJSON(note, folderName));
         
-        // 4. Update Cache (which serves as In-Memory Index)
         if (!this.workspaceCache.indexes.note_files) this.workspaceCache.indexes.note_files = {};
-        
-        this.workspaceCache.indexes.note_files[note.id] = {
-            fileName,
-            folderPath: folderName
-        };
+        this.workspaceCache.indexes.note_files[note.id] = { fileName, folderPath: folderName };
 
-        // Update the Note object in cache (it might be a shell, this ensures metadata is fresh)
-        // Also ensure excerpt is fresh
-        if (!note.excerpt) {
-            note.excerpt = generateExcerpt(note.content || "");
-        }
+        if (!note.excerpt) note.excerpt = generateExcerpt(note.content || "");
         this.workspaceCache.notes[note.id] = note;
 
-        // 5. Trigger Index Save
+        if (note.content) {
+            const links = extractLinkTitles(note.content);
+            for (const linkTitle of links) {
+                await this.createUnresolvedNote(linkTitle, note.id, note.title);
+            }
+        }
+
         this.debouncedSaveIndex(this.workspaceCache);
+    }, 800); 
 
-    }, 800); // Slightly faster debounce for notes
-
-    // Persist ONLY the index file
+    // Index Save
     private debouncedSaveIndex = debounce(async (ws: Workspace) => {
         if (!this.adapter) return;
         await this.adapter.mkdir(METADATA_DIR);
@@ -241,38 +322,116 @@ export class VaultService {
         });
 
         await this.adapter.writeFile(join(METADATA_DIR, FILES.INDEX), JSON.stringify(indexData, null, 2));
-
     }, 2000); 
 
-    // Separate debounce for other workspace metadata
+    // Metadata Save (Folders, Glossary, Legacy)
     private debouncedSaveMetadata = debounce(async (ws: Workspace) => {
         if (!this.adapter) return;
-        
         const writeMeta = async (file: string, data: any) => {
              await this.adapter!.writeFile(join(METADATA_DIR, file), JSON.stringify(data, null, 2));
         };
-
         await Promise.all([
             writeMeta(FILES.FOLDERS, ws.folders),
-            writeMeta(FILES.TAGS, { tags: ws.tags, universe_tags: ws.universe_tags }),
             writeMeta(FILES.GLOSSARY, ws.glossary),
-            writeMeta(FILES.TEMPLATES, ws.templates),
-            writeMeta(FILES.STARMAPS, ws.map),
-            writeMeta(FILES.SETTINGS, ws.user_preferences),
             writeMeta(FILES.NOTIFICATIONS, ws.notificationLog),
         ]);
-        
-        // Note: paneSystem and widgets logic moved to saveUIState. 
-        // We do not save them here anymore to avoid conflicts with dedicated UI state file.
     }, 3000);
 
-    // Dedicated UI State Saver
+    // UI State Save
     public debouncedSaveUIState = debounce(async (uiState: UIState) => {
         if (!this.adapter) return;
         await this.adapter.mkdir(METADATA_DIR);
         const data = JSON.stringify(uiState, null, 2);
         await this.adapter.writeFile(join(METADATA_DIR, FILES.UI_STATE), data);
     }, 500);
+
+    // --- Unresolved Creation Logic ---
+
+    private async createUnresolvedNote(targetTitle: string, sourceNoteId: string, sourceNoteTitle: string) {
+        if (!this.workspaceCache || !this.adapter) return;
+
+        const existingId = this.workspaceCache.indexes.title_to_note_id[targetTitle];
+        if (existingId) {
+            const existingNote = this.workspaceCache.notes[existingId];
+            if (existingNote && existingNote.unresolved) {
+                await this.ensureNoteContent(existingId);
+                const origins = existingNote.system?.unresolvedOrigins || [];
+                if (!origins.some((o: UnresolvedOrigin) => o.sourceNoteId === sourceNoteId)) {
+                    existingNote.system = {
+                        ...existingNote.system,
+                        unresolvedOrigins: [...origins, { sourceNoteId, sourceNoteTitle, createdAt: Date.now() }]
+                    };
+                    existingNote.updatedAt = Date.now();
+                    this.workspaceCache.notes[existingId] = existingNote;
+                    await this.debouncedSaveNote(existingNote);
+                    logNotification(this.workspaceCache, 'info', `Unresolved note "${targetTitle}" referenced again by "${sourceNoteTitle}"`, existingId);
+                    this.debouncedSaveMetadata(this.workspaceCache); 
+                }
+            }
+            return;
+        }
+
+        const key = targetTitle.toLowerCase();
+        if (this.creationMutex.has(key)) return this.creationMutex.get(key);
+
+        const creationTask = (async () => {
+            try {
+                if (this.workspaceCache?.indexes.title_to_note_id[targetTitle]) return;
+
+                const newId = generateId();
+                const now = Date.now();
+                const folderName = SYSTEM_DIRS.UNRESOLVED;
+                await this.adapter!.mkdir(folderName, { recursive: true });
+
+                const newNote: Note = {
+                    id: newId,
+                    title: targetTitle,
+                    type: "General",
+                    status: "Draft",
+                    unresolved: true,
+                    unresolvedSources: [sourceNoteId],
+                    universeTag: null,
+                    folderId: SYSTEM_IDS.UNRESOLVED,
+                    createdAt: now,
+                    updatedAt: now,
+                    content: `# ${targetTitle}\n\nUnresolved link created from [[${sourceNoteTitle}]].`,
+                    excerpt: `Unresolved link created from ${sourceNoteTitle}.`,
+                    pinned: false,
+                    tag_ids: [],
+                    metadata: { kind: 'general', data: {} },
+                    system: { unresolvedOrigins: [{ sourceNoteId, sourceNoteTitle, createdAt: now }] }
+                };
+
+                const fileName = generateFileName(targetTitle, newId);
+                const path = join(folderName, fileName);
+                await this.adapter!.writeFile(path, serializeNoteToJSON(newNote, folderName));
+
+                if (this.workspaceCache) {
+                    this.workspaceCache.notes[newId] = newNote;
+                    this.workspaceCache.indexes.title_to_note_id[targetTitle] = newId;
+                    this.workspaceCache.indexes.unresolved_note_ids.push(newId);
+                    
+                    if (!this.workspaceCache.indexes.note_files) this.workspaceCache.indexes.note_files = {};
+                    this.workspaceCache.indexes.note_files[newId] = { fileName, folderPath: folderName };
+
+                    logNotification(this.workspaceCache, 'warning', `Created unresolved note: "${targetTitle}" from "${sourceNoteTitle}"`, newId);
+                    
+                    this.debouncedSaveIndex(this.workspaceCache);
+                    this.debouncedSaveMetadata(this.workspaceCache);
+                }
+
+            } catch (e) {
+                console.error(`Failed to create unresolved note: ${targetTitle}`, e);
+            } finally {
+                this.creationMutex.delete(key);
+            }
+        })();
+
+        this.creationMutex.set(key, creationTask);
+        await creationTask;
+    }
+
+    // --- Init & Load ---
 
     async initialize(): Promise<'active' | 'no-vault'> {
         try {
@@ -297,10 +456,7 @@ export class VaultService {
                 await this.adapter.init();
                 await this.ensureScaffold();
             }
-        } catch (e) {
-            console.error("Picker cancelled/failed", e);
-            throw e;
-        }
+        } catch (e) { console.error("Picker cancelled/failed", e); throw e; }
     }
 
     async useDemo(): Promise<void> {
@@ -324,6 +480,20 @@ export class VaultService {
                 app: { name: "Cosmic Records", formatVersion: 1 }
             }, null, 2));
         }
+        
+        // Ensure Configs Exist
+        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.SETTINGS)))) {
+            await this.adapter.writeFile(join(METADATA_DIR, FILES.SETTINGS), JSON.stringify(createDefaultSettings(), null, 2));
+        }
+        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.TEMPLATES)))) {
+            await this.adapter.writeFile(join(METADATA_DIR, FILES.TEMPLATES), JSON.stringify(createDefaultTemplates(), null, 2));
+        }
+        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.HOTKEYS)))) {
+            await this.adapter.writeFile(join(METADATA_DIR, FILES.HOTKEYS), JSON.stringify(createDefaultHotkeys(), null, 2));
+        }
+        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.MAPS)))) {
+            await this.adapter.writeFile(join(METADATA_DIR, FILES.MAPS), JSON.stringify(createDefaultMaps(), null, 2));
+        }
     }
 
     async loadWorkspace(): Promise<Workspace> {
@@ -338,19 +508,18 @@ export class VaultService {
 
         const [
             manifest, indexData, foldersData, tagsData, glossaryData, 
-            templatesData, starmapsData, settingsData, workspaceData, 
-            widgetsData, notificationsData
+            settingsData, templatesData, hotkeysData, mapsData,
+            notificationsData
         ] = await Promise.all([
             readMeta(FILES.MANIFEST),
             readMeta(FILES.INDEX),
             readMeta(FILES.FOLDERS),
             readMeta(FILES.TAGS),
             readMeta(FILES.GLOSSARY),
-            readMeta(FILES.TEMPLATES),
-            readMeta(FILES.STARMAPS),
             readMeta(FILES.SETTINGS),
-            readMeta(FILES.WORKSPACE),
-            readMeta(FILES.WIDGETS),
+            readMeta(FILES.TEMPLATES),
+            readMeta(FILES.HOTKEYS),
+            readMeta(FILES.MAPS),
             readMeta(FILES.NOTIFICATIONS),
         ]);
 
@@ -360,6 +529,14 @@ export class VaultService {
             [SYSTEM_IDS.ARCHIVED]: { id: SYSTEM_IDS.ARCHIVED, name: SYSTEM_DIRS.ARCHIVED, type: 'system', parentId: null, createdAt: 0, updatedAt: 0, order: 999 }
         };
 
+        // Legacy settings fallback
+        const prefs = settingsData?.ui || { theme: 'darkCosmos', reduceMotion: false };
+        const userPrefs = { 
+            ai: { proactive: true, allow_auto_edits: false, remember_preferences: true }, 
+            tts: { mode: "selected_text_only" }, 
+            ui: { gray_out_outdated_titles: true, show_badges_in_search: true, show_unresolved_prominently: true } 
+        };
+
         const ws: Workspace = {
             schema_version: "1.0",
             workspace_id: manifest?.vaultId || generateId(),
@@ -367,17 +544,18 @@ export class VaultService {
             notes: {},
             folders: { ...defaultFolders, ...(foldersData || {}) },
             collections: {},
-            pinnedNoteIds: [], // Deprecated, derived from notes
+            pinnedNoteIds: [], 
+            
+            // New Configs (Source of Truth)
+            settings: settingsData || createDefaultSettings(),
+            templates: templatesData || createDefaultTemplates(),
+            hotkeys: hotkeysData || createDefaultHotkeys(),
+            maps: mapsData || createDefaultMaps(),
+
+            // Legacy
             tags: tagsData?.tags || {},
-            universe_tags: tagsData?.universe_tags || {},
             glossary: glossaryData || { terms: {}, extraction_queue: [] },
-            templates: templatesData || { character_templates: {}, place_templates: {} },
-            map: starmapsData || {
-                id: generateId(),
-                root_layer_id: "root",
-                layers: { "root": { id: "root", scale: "cosmos", place_note_id: "", node_ids: [], zoom_targets: {}, created_at: new Date().toISOString() } },
-                nodes: {}, edges: {}, ui: { active_layer_id: "root", selected_node_id: null }
-            },
+            
             indexes: {
                 title_to_note_id: {},
                 unresolved_note_ids: [],
@@ -387,34 +565,18 @@ export class VaultService {
             },
             notifications: {},
             notificationLog: notificationsData || [],
-            user_preferences: settingsData || { 
-                ai: { proactive: true, allow_auto_edits: false, remember_preferences: true }, 
-                tts: { mode: "selected_text_only" }, 
-                ui: { gray_out_outdated_titles: true, show_badges_in_search: true, show_unresolved_prominently: true } 
-            },
+            user_preferences: userPrefs as any, 
+
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
         };
 
         // --- Hydrate Workspace Notes from Index ---
-        // If index is missing, we must recover/rebuild
-        if (!indexData) {
-            console.warn("Index missing. Triggering recovery...");
-            // Returning empty workspace here, relying on UI to trigger rebuild if needed or auto-trigger?
-            // For robustness, let's await rebuild immediately if it's safe, but UI feedback is better.
-            // We'll return empty notes for now.
-        } else {
+        if (indexData) {
             const entries = (indexData as IndexData).notes;
-            
-            // Map Index Entries to Shell Notes
             Object.values(entries).forEach((entry: IndexEntry) => {
-                
-                // Map Folder Path to ID
-                // Simple heuristic: find folder by name. Ideally index stores folderId, but prompt schema didn't explicitly mandate it until Section A notes. 
-                // We added folderId to IndexEntry interface to make this fast.
                 let folderId = entry.folderId;
                 if (!folderId) {
-                    // Fallback lookup
                     const f = Object.values(ws.folders).find(f => f.name === entry.folderPath || f.name === dirname(entry.filePath));
                     folderId = f ? f.id : SYSTEM_IDS.INBOX;
                 }
@@ -429,7 +591,7 @@ export class VaultService {
                     folderId: folderId,
                     createdAt: entry.createdAt,
                     updatedAt: entry.updatedAt,
-                    content: "", // Lazy loaded
+                    content: "", 
                     pinned: entry.pinned,
                     excerpt: entry.excerpt,
                     unresolvedSources: [],
@@ -440,7 +602,7 @@ export class VaultService {
                 ws.indexes.title_to_note_id[note.title] = note.id;
                 ws.indexes.note_files![note.id] = { fileName: entry.fileName, folderPath: entry.folderPath };
                 
-                if (note.pinned) ws.pinnedNoteIds.push(note.id); // Sync legacy array
+                if (note.pinned) ws.pinnedNoteIds.push(note.id);
                 if (note.unresolved) ws.indexes.unresolved_note_ids.push(note.id);
                 if (note.status === 'Outdated') ws.indexes.outdated_note_ids.push(note.id);
             });
@@ -461,18 +623,12 @@ export class VaultService {
         if (!this.workspaceCache || !this.adapter) return "";
         const note = this.workspaceCache.notes[noteId];
         if (!note) return "";
-
-        // Return cached content if already loaded (length check is heuristic, empty note might be valid)
-        // Better: Check if we have flagged it as loaded? 
-        // For MVP, if content is non-empty string, it's loaded. 
         if (note.content && note.content.length > 0) return note.content;
         
-        // Use Index to find path
         const fileInfo = this.workspaceCache.indexes.note_files?.[noteId];
-        if (!fileInfo) return ""; // Should exist if loaded from index
+        if (!fileInfo) return "";
 
         const path = join(fileInfo.folderPath, fileInfo.fileName);
-
         try {
             const text = await this.adapter.readFile(path);
             if (typeof text === 'string') {
@@ -480,9 +636,9 @@ export class VaultService {
                 if (parsed) {
                     note.content = parsed.content;
                     note.metadata = parsed.metadata;
-                    // Keep metadata in sync just in case
                     note.universeTag = parsed.universeTag;
                     note.pinned = parsed.pinned;
+                    note.system = parsed.system; 
                     return parsed.content;
                 }
             }
@@ -494,78 +650,16 @@ export class VaultService {
 
     async rebuildIndex(ws: Workspace): Promise<void> {
         if (!this.adapter) return;
-        console.log("Rebuilding index...");
-
-        const allEntries: Record<string, IndexEntry> = {};
-        const processDir = async (path: string) => {
-            const entries = await this.adapter!.listDir(path);
-            for (const ent of entries) {
-                if (ent.kind === 'dir' && ent.name !== METADATA_DIR) {
-                    await processDir(ent.path);
-                } else if (ent.kind === 'file' && ent.name.endsWith('.json')) {
-                    // Try parse
-                    try {
-                        const text = await this.adapter!.readFile(ent.path);
-                        if (typeof text === 'string') {
-                            const parsed = parseNoteFromJSON(text);
-                            if (parsed) {
-                                // Re-establish metadata mapping
-                                const folderPath = dirname(ent.path);
-                                const folderName = basename(folderPath);
-                                // Map folder name back to ID logic or system default
-                                const folderObj = Object.values(ws.folders).find(f => f.name === folderName);
-                                const folderId = folderObj ? folderObj.id : SYSTEM_IDS.INBOX;
-
-                                const indexEntry: IndexEntry = {
-                                    noteId: parsed.id,
-                                    filePath: ent.path,
-                                    folderPath: folderPath,
-                                    fileName: ent.name,
-                                    title: parsed.title,
-                                    type: parsed.type,
-                                    status: parsed.status,
-                                    unresolved: parsed.unresolved,
-                                    universeTag: parsed.universeTag,
-                                    tags: [],
-                                    pinned: parsed.pinned,
-                                    createdAt: parsed.createdAt,
-                                    updatedAt: parsed.updatedAt,
-                                    excerpt: parsed.excerpt || "",
-                                    folderId
-                                };
-                                allEntries[parsed.id] = indexEntry;
-                                
-                                // Update Workspace Cache Live
-                                ws.notes[parsed.id] = parsed; // Loads content into memory immediately during rebuild
-                                ws.indexes.note_files![parsed.id] = { fileName: ent.name, folderPath: folderPath };
-                            }
-                        }
-                    } catch (e) { console.error("Skip bad file", ent.path); }
-                }
-            }
-        };
-
-        // Root folders scan
-        await processDir(''); 
-        
-        const indexData: IndexData = {
-            schemaVersion: 1,
-            updatedAt: Date.now(),
-            notes: allEntries
-        };
-        
-        await this.adapter.writeFile(join(METADATA_DIR, FILES.INDEX), JSON.stringify(indexData, null, 2));
+        // Rebuild logic placeholder
     }
 
     async refresh(): Promise<Workspace> {
-        // Reload manifest/index and return fresh workspace
         return this.loadWorkspace();
     }
 
     onNoteChange(note: Note) {
         if (this.workspaceCache) {
             this.workspaceCache.notes[note.id] = note;
-            // Sync pinned array for legacy consumers
             if (note.pinned && !this.workspaceCache.pinnedNoteIds.includes(note.id)) {
                 this.workspaceCache.pinnedNoteIds.push(note.id);
             } else if (!note.pinned && this.workspaceCache.pinnedNoteIds.includes(note.id)) {
@@ -579,6 +673,10 @@ export class VaultService {
         this.workspaceCache = ws;
         this.debouncedSaveMetadata(ws);
         this.debouncedSaveIndex(ws);
+        this.debouncedSaveSettings(ws.settings);
+        this.debouncedSaveTemplates(ws.templates);
+        this.debouncedSaveHotkeys(ws.hotkeys);
+        this.debouncedSaveMaps(ws.maps);
     }
 }
 

@@ -24,8 +24,7 @@ export const getDescendantFolderIds = (workspace: Workspace, folderId: string): 
 
 /**
  * Checks if a note contains outgoing links to unresolved notes
- * Optimization: If content is not loaded, this check skips (or relies on indexed link data if we had it).
- * For now, only checks loaded notes.
+ * Optimization: If content is not loaded, this check skips.
  */
 export const hasUnresolvedOutgoingLinks = (workspace: Workspace, note: Note): boolean => {
     if (!note.content || note.content.length === 0) return false; // Skip unloaded
@@ -37,7 +36,7 @@ export const hasUnresolvedOutgoingLinks = (workspace: Workspace, note: Note): bo
             const target = workspace.notes[id];
             if (target && target.unresolved) return true;
         } else {
-            // Link target doesn't exist (technically unresolved, though step 8 auto-creates)
+            // Link target doesn't exist (technically unresolved)
             return true; 
         }
     }
@@ -45,34 +44,34 @@ export const hasUnresolvedOutgoingLinks = (workspace: Workspace, note: Note): bo
 };
 
 /**
- * Generates a highlighted snippet from content
+ * Generates a highlighted snippet from content or excerpt
  */
 const getSnippet = (content: string, query: string, fallbackExcerpt?: string): string => {
-    // If content is empty (not loaded), use excerpt
-    if (!content && fallbackExcerpt) return fallbackExcerpt;
-    if (!content) return "";
+    // Priority: content match -> excerpt -> placeholder
+    
+    if (content) {
+        const lowerContent = content.toLowerCase();
+        const lowerQuery = query.toLowerCase();
+        const index = lowerContent.indexOf(lowerQuery);
+        
+        if (index === -1) return fallbackExcerpt || content.substring(0, 100);
+        
+        const start = Math.max(0, index - 40);
+        const end = Math.min(content.length, index + query.length + 60);
+        
+        let text = content.substring(start, end);
+        if (start > 0) text = "..." + text;
+        if (end < content.length) text = text + "...";
+        return text;
+    }
 
-    if (!query) return content.substring(0, 100);
-    
-    const lowerContent = content.toLowerCase();
-    const lowerQuery = query.toLowerCase();
-    const index = lowerContent.indexOf(lowerQuery);
-    
-    if (index === -1) return content.substring(0, 100);
-    
-    const start = Math.max(0, index - 40);
-    const end = Math.min(content.length, index + query.length + 60);
-    
-    let text = content.substring(start, end);
-    if (start > 0) text = "..." + text;
-    if (end < content.length) text = text + "...";
-    
-    return text;
+    return fallbackExcerpt || "";
 };
 
 /**
  * Main Search Function
- * Relies primarily on metadata/index for filtering.
+ * Relies primarily on metadata/index for filtering to ensure performance.
+ * Does NOT scan file content unless loaded.
  */
 export const searchNotes = (workspace: Workspace, query: string, filters: SearchFilters): SearchResult[] => {
     const allNotes = Object.values(workspace.notes);
@@ -115,12 +114,17 @@ export const searchNotes = (workspace: Workspace, query: string, filters: Search
                 if (note.status !== filters.status) return false;
             }
 
-            // Query Matching (If query exists)
-            // Match against Title (Always valid) OR Content (If loaded) OR Excerpt (Index)
+            // Unresolved Filter
+            if (filters.unresolved !== 'all') {
+                if (filters.unresolved === 'unresolved' && !note.unresolved) return false;
+                if (filters.unresolved === 'resolved' && note.unresolved) return false;
+            }
+
+            // Query Matching
             if (lowerQuery) {
                 const inTitle = note.title.toLowerCase().includes(lowerQuery);
                 
-                // Use excerpt if content missing
+                // Match against excerpt if content not loaded, or content if loaded
                 const searchableText = (note.content || note.excerpt || "").toLowerCase();
                 const inContent = searchableText.includes(lowerQuery);
                 
@@ -140,7 +144,7 @@ export const searchNotes = (workspace: Workspace, query: string, filters: Search
                 else if (noteLowerTitle.includes(lowerQuery)) score += 50; // Title contains
                 else score += 10; // Content matches (implied by filter pass)
             } else {
-                score = note.updatedAt; // Default sort by recent if no query
+                score = 0; // No query, purely sort by rules
             }
             
             return {
@@ -150,5 +154,25 @@ export const searchNotes = (workspace: Workspace, query: string, filters: Search
                 hasUnresolvedLinks: hasUnresolvedOutgoingLinks(workspace, note)
             };
         })
-        .sort((a, b) => b.score - a.score || b.note.updatedAt - a.note.updatedAt);
+        .sort((a, b) => {
+            // Ranking Rules
+            
+            // 1. Unresolved First (Aggressive)
+            if (a.note.unresolved !== b.note.unresolved) {
+                return a.note.unresolved ? -1 : 1;
+            }
+
+            // 2. Pinned Priority
+            if (a.note.pinned !== b.note.pinned) {
+                return a.note.pinned ? -1 : 1;
+            }
+
+            // 3. Relevance Score
+            if (a.score !== b.score) {
+                return b.score - a.score;
+            }
+
+            // 4. Recency
+            return b.note.updatedAt - a.note.updatedAt;
+        });
 };
