@@ -1,15 +1,16 @@
-
 import React, { useEffect, useRef } from 'react';
 
-export interface ContextMenuItem {
-    label: string;
-    icon?: React.ElementType;
-    onClick: () => void;
-    disabled?: boolean;
-    danger?: boolean;
-    separator?: boolean;
-    subMenu?: ContextMenuItem[]; 
-}
+export type ContextMenuItem = 
+    | { separator: true }
+    | {
+        label: string;
+        icon?: React.ElementType;
+        onClick: () => void;
+        disabled?: boolean;
+        danger?: boolean;
+        separator?: false;
+        subMenu?: ContextMenuItem[]; 
+    };
 
 interface ContextMenuProps {
     x: number;
@@ -52,34 +53,30 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
             style={style}
         >
             {items.map((item, index) => {
-                if (item.separator) {
+                if ('separator' in item && item.separator) {
                     return <div key={index} className="h-[1px] bg-border my-1" />;
                 }
                 
-                const Icon = item.icon;
+                const menuItem = item as Extract<ContextMenuItem, { label: string }>;
+                const Icon = menuItem.icon;
                 
-                // Simple sub-menu handling could be recursive but keeping flat for now or simple nesting logic 
-                // For MVP, if subMenu exists, we might need a more complex component.
-                // Assuming simple flat menu for now as per previous, but "Add to Collection" might need a submenu later.
-                // For now, let's keep it simple.
-
                 return (
                     <button
                         key={index}
                         onClick={() => {
-                            if (!item.disabled) {
-                                item.onClick();
+                            if (!menuItem.disabled) {
+                                menuItem.onClick();
                                 onClose();
                             }
                         }}
-                        disabled={item.disabled}
+                        disabled={menuItem.disabled}
                         className={`w-full text-left px-3 py-1.5 text-xs flex items-center gap-2 hover:bg-[var(--c-hover)] transition-colors
-                            ${item.disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
-                            ${item.danger ? 'text-danger hover:text-red-400' : 'text-foreground'}
+                            ${menuItem.disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+                            ${menuItem.danger ? 'text-danger hover:text-red-400' : 'text-foreground'}
                         `}
                     >
                         {Icon && <Icon size={14} className="opacity-70" />}
-                        <span>{item.label}</span>
+                        <span>{menuItem.label}</span>
                     </button>
                 );
             })}

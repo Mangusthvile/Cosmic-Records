@@ -1,4 +1,3 @@
-
 import { getHandle, setHandle, getEntry, putEntry, deleteEntry, getAllEntries } from './idb';
 import { normalize, dirname, join, basename } from './path';
 
@@ -60,11 +59,16 @@ export class FileSystemAccessAdapter implements VaultAdapter {
 
     private async resolveHandle(path: string, create: boolean = false, kind: 'file' | 'dir' = 'file'): Promise<FileSystemHandle | undefined> {
         if (!this.root) throw new Error("Not initialized");
-        const parts = normalize(path).split('/').filter(p => p.length > 0);
+        
+        // Normalize: treat "." and "" as root
+        const normalizedPath = (path === '.' || path === '') ? '' : normalize(path);
+        const parts = normalizedPath.split('/').filter(p => p.length > 0);
+        
         if (parts.length === 0) return this.root; // Root
 
         let current: FileSystemDirectoryHandle = this.root;
         
+        // Traverse dirs
         for (let i = 0; i < parts.length - 1; i++) {
             try {
                 current = await current.getDirectoryHandle(parts[i], { create: create });
@@ -100,21 +104,30 @@ export class FileSystemAccessAdapter implements VaultAdapter {
         if (!handle) throw new Error(`Could not write to: ${path}`);
         
         const writable = await handle.createWritable();
-        await writable.write(data);
+        if (typeof data === 'string') {
+            await writable.write(data);
+        } else {
+            const buffer = data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+            await writable.write(buffer);
+        }
         await writable.close();
     }
 
     async listDir(path: string): Promise<DirEntry[]> {
+        // Fix: Explicitly handle root path normalization for resolveHandle
         const handle = await this.resolveHandle(path, false, 'dir') as FileSystemDirectoryHandle;
         if (!handle) throw new Error(`Directory not found: ${path}`);
         
         const entries: DirEntry[] = [];
-        // @ts-ignore - iterate entries
+        // @ts-ignore
         for await (const [name, entry] of handle.entries()) {
             const file = entry.kind === 'file' ? await (entry as FileSystemFileHandle).getFile() : null;
+            // Join path carefully. If root, just use name.
+            const entryPath = (path === '' || path === '.') ? name : join(path, name);
+            
             entries.push({
                 name: name,
-                path: join(path, name),
+                path: entryPath,
                 kind: entry.kind === 'directory' ? 'dir' : 'file',
                 size: file ? file.size : undefined,
                 modifiedAt: file ? file.lastModified : undefined
@@ -128,7 +141,6 @@ export class FileSystemAccessAdapter implements VaultAdapter {
     }
 
     async move(from: string, to: string): Promise<void> {
-        // Copy-delete for file
         const srcHandle = await this.resolveHandle(from, false, 'file') as FileSystemFileHandle;
         if (!srcHandle) throw new Error(`Source not found: ${from}`);
         
@@ -140,7 +152,6 @@ export class FileSystemAccessAdapter implements VaultAdapter {
     }
 
     async renameDir(oldPath: string, newPath: string): Promise<void> {
-        // Recursive copy-delete for directory
         const copyRecursive = async (src: string, dest: string) => {
             await this.mkdir(dest);
             const entries = await this.listDir(src);
@@ -154,10 +165,7 @@ export class FileSystemAccessAdapter implements VaultAdapter {
             }
         };
 
-        // Check source existence
         if (!(await this.exists(oldPath))) throw new Error(`Source dir not found: ${oldPath}`);
-        
-        // Check dest existence (fail if exists to be safe)
         if (await this.exists(newPath)) throw new Error(`Destination dir already exists: ${newPath}`);
 
         await copyRecursive(oldPath, newPath);
@@ -179,15 +187,13 @@ export class FileSystemAccessAdapter implements VaultAdapter {
     }
 }
 
-// --- IndexedDB Adapter (Demo) ---
+// --- IndexedDB Adapter ---
 
 export class IndexedDbAdapter implements VaultAdapter {
     id = 'idb-vault';
     type = 'local' as const;
 
-    async init() {
-        // IDB init handled in getEntry/putEntry
-    }
+    async init() { }
 
     async readFile(path: string, encoding: "utf8" | "binary" = "utf8"): Promise<Uint8Array | string> {
         const entry = await getEntry(normalize(path));
@@ -207,7 +213,6 @@ export class IndexedDbAdapter implements VaultAdapter {
             modifiedAt: Date.now()
         });
         
-        // Implicitly create parents?
         const parent = dirname(normPath);
         if (parent && parent !== '.') {
             await this.mkdir(parent, { recursive: true });
@@ -215,7 +220,7 @@ export class IndexedDbAdapter implements VaultAdapter {
     }
 
     async listDir(path: string): Promise<DirEntry[]> {
-        const normPath = normalize(path);
+        const normPath = (path === '.' || path === '') ? '' : normalize(path);
         const all = await getAllEntries();
         const prefix = normPath ? normPath + '/' : '';
         
@@ -228,7 +233,6 @@ export class IndexedDbAdapter implements VaultAdapter {
                 const slashIndex = relative.indexOf('/');
                 
                 if (slashIndex === -1) {
-                    // Direct child
                     children.push({
                         name: relative,
                         path: entry.path,
@@ -237,10 +241,8 @@ export class IndexedDbAdapter implements VaultAdapter {
                         size: entry.data ? entry.data.length : 0
                     });
                 } else {
-                    // Subdirectory representative (virtual folder if explicit dir record missing)
                     const dirName = relative.substring(0, slashIndex);
                     if (!seen.has(dirName)) {
-                        // Check if we already added this dir
                         if (!children.some(c => c.name === dirName)) {
                              children.push({ name: dirName, path: prefix + dirName, kind: 'dir' });
                         }
@@ -254,7 +256,7 @@ export class IndexedDbAdapter implements VaultAdapter {
 
     async mkdir(path: string, options: MkdirOptions = { recursive: true }): Promise<void> {
         const normPath = normalize(path);
-        if (!normPath) return; // Root
+        if (!normPath || normPath === '.') return;
         
         const exists = await getEntry(normPath);
         if (!exists) {
@@ -282,16 +284,13 @@ export class IndexedDbAdapter implements VaultAdapter {
     }
 
     async renameDir(oldPath: string, newPath: string): Promise<void> {
-        // Recursive rename in IDB
         const all = await getAllEntries();
         const prefix = normalize(oldPath) + '/';
         const newPrefix = normalize(newPath) + '/';
 
-        // Check if destination exists (shallow check)
         const destExists = await getEntry(normalize(newPath));
         if (destExists) throw new Error("Destination directory exists");
 
-        // Move children
         for (const e of all) {
             if (e.path.startsWith(prefix)) {
                 const suffix = e.path.substring(prefix.length);
@@ -301,13 +300,11 @@ export class IndexedDbAdapter implements VaultAdapter {
             }
         }
         
-        // Move directory entry itself
         const dirEntry = await getEntry(normalize(oldPath));
         if (dirEntry) {
             await putEntry({ ...dirEntry, path: normalize(newPath) });
             await deleteEntry(normalize(oldPath));
         } else {
-             // Virtual directory created by children, just ensure new one exists
              await putEntry({ path: normalize(newPath), kind: 'dir', modifiedAt: Date.now() });
         }
     }
@@ -320,7 +317,6 @@ export class IndexedDbAdapter implements VaultAdapter {
         if (entry.kind === 'file') {
             await deleteEntry(norm);
         } else {
-            // Recursive delete
             const all = await getAllEntries();
             const prefix = norm + '/';
             for (const e of all) {

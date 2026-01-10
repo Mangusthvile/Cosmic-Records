@@ -1,11 +1,11 @@
-
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Note, NoteStatus, Workspace, Folder, NoteTypeDefinition } from '../types';
-import { RefreshCw, ChevronDown, ChevronRight, Loader, Eye, Box, Search, ArrowUp, ArrowDown, X, Folder as FolderIcon, AlertTriangle } from 'lucide-react';
+import { Note, NoteStatus, Workspace, Folder, NoteTypeDefinition, CharacterState } from '../types';
+import { RefreshCw, ChevronDown, ChevronRight, Loader, Eye, Box, Search, ArrowUp, ArrowDown, X, Folder as FolderIcon, AlertTriangle, Layers, Plus, Camera, Archive } from 'lucide-react';
 import { getUniqueTitle, moveNote, resolveNote } from '../services/storageService';
 import HybridEditor, { HybridEditorHandle } from './editor/HybridEditor';
 import { vaultService, noteContentToPlainText } from '../services/vaultService';
-import { Input, Select, Badge, IconButton } from './ui/Primitives';
+import { Input, Select, Badge, IconButton, Button } from './ui/Primitives';
+import InterviewView from './views/InterviewView';
 
 interface NoteEditorProps {
   note: Note; 
@@ -32,6 +32,10 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note: initialMeta, workspace, o
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isFirstLoad = useRef(true);
 
+  // Character State
+  const characterState = localMeta.metadata?.characterState as CharacterState | undefined;
+  const activeFormId = characterState?.activeFormId || 'base';
+
   useEffect(() => {
       let isMounted = true;
       const loadBody = async () => {
@@ -53,6 +57,10 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note: initialMeta, workspace, o
   }, [initialMeta]);
 
   const performSave = useCallback(async (noteState: Note, contentState: any) => {
+      if (!contentState || (typeof contentState === 'object' && !contentState.type && !contentState.doc)) {
+          console.warn("Prevented saving invalid content");
+          return;
+      }
       setSaveStatus('saving');
       onUpdate({ ...noteState, content: contentState, updatedAt: Date.now() }); 
       setSaveStatus('saved');
@@ -65,6 +73,21 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note: initialMeta, workspace, o
   };
 
   const handleManualSave = () => { if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current); performSave(localMeta, localContent); };
+  
+  // Autosave on unmount/blur implicitly via cleanup? No, explicit save before unload is safer.
+  // We rely on React state, but adding a listener for window unload might help.
+  useEffect(() => {
+      const handleBeforeUnload = () => {
+          if (saveStatus === 'unsaved') performSave(localMeta, localContent);
+      };
+      window.addEventListener('beforeunload', handleBeforeUnload);
+      return () => {
+          window.removeEventListener('beforeunload', handleBeforeUnload);
+          // Also save on component unmount if unsaved
+          if (saveStatus === 'unsaved') performSave(localMeta, localContent); 
+      };
+  }, [saveStatus, localMeta, localContent, performSave]);
+
   const handleContentChange = (newDoc: any) => { setLocalContent(newDoc); scheduleSave(localMeta, newDoc); };
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => { const newMeta = { ...localMeta, title: e.target.value }; setLocalMeta(newMeta); scheduleSave(newMeta, localContent); };
   
@@ -89,6 +112,70 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note: initialMeta, workspace, o
   
   const handleResolve = () => { if (confirm("Mark this note as resolved?")) { const newWorkspace = resolveNote(workspace, localMeta.id); onUpdate(newWorkspace.notes[localMeta.id], newWorkspace); } };
 
+  const handleFormChange = (formId: string) => {
+      if (!characterState) return;
+      const newState = { ...characterState, activeFormId: formId };
+      const newMeta = { ...localMeta, metadata: { ...localMeta.metadata, characterState: newState } };
+      setLocalMeta(newMeta);
+      performSave(newMeta, localContent);
+  };
+
+  const handleCreateForm = () => {
+      const name = prompt("Name for new form (e.g. 'Ascended'):");
+      if (!name) return;
+      if (!characterState) return;
+      const newForm = { formId: crypto.randomUUID(), name, description: '', overrides: {} };
+      const newState = { ...characterState, forms: [...characterState.forms, newForm], activeFormId: newForm.formId };
+      const newMeta = { ...localMeta, metadata: { ...localMeta.metadata, characterState: newState } };
+      setLocalMeta(newMeta);
+      performSave(newMeta, localContent);
+  };
+
+  const handleUpdateFormOverride = (moduleId: string, data: any) => {
+      if (!characterState || activeFormId === 'base') return;
+      
+      const forms = [...characterState.forms];
+      const formIndex = forms.findIndex(f => f.formId === activeFormId);
+      if (formIndex === -1) return;
+
+      const currentForm = forms[formIndex];
+      const newOverrides = { ...currentForm.overrides };
+      
+      if (data === undefined) {
+          delete newOverrides[moduleId];
+      } else {
+          newOverrides[moduleId] = data;
+      }
+
+      forms[formIndex] = { ...currentForm, overrides: newOverrides };
+      const newState = { ...characterState, forms };
+      const newMeta = { ...localMeta, metadata: { ...localMeta.metadata, characterState: newState } };
+      setLocalMeta(newMeta);
+      scheduleSave(newMeta, localContent); 
+  };
+
+  const handleCreateSnapshot = () => {
+      if (!characterState) return;
+      const label = prompt("Snapshot Label (e.g. 'End of Arc 1'):");
+      if (!label) return;
+      
+      const currentForm = activeFormId === 'base' ? null : characterState.forms.find(f => f.formId === activeFormId);
+      const snapshot = {
+          snapshotId: crypto.randomUUID(),
+          label,
+          dateText: new Date().toLocaleDateString(),
+          createdAt: Date.now(),
+          notes: '',
+          capturedModuleData: currentForm ? currentForm.overrides : {},
+          formId: activeFormId
+      };
+      
+      const newState = { ...characterState, snapshots: [...characterState.snapshots, snapshot] };
+      const newMeta = { ...localMeta, metadata: { ...localMeta.metadata, characterState: newState } };
+      setLocalMeta(newMeta);
+      performSave(newMeta, localContent);
+  };
+
   useEffect(() => {
       const handleAppCommand = (e: CustomEvent) => {
           if (isFocusedPane === false) return; 
@@ -107,7 +194,16 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note: initialMeta, workspace, o
   const handleSearchChange = (val: string) => { setSearchQuery(val); editorRef.current?.setSearchTerm(val); };
   const closeSearch = () => { setIsFindOpen(false); setSearchQuery(''); editorRef.current?.clearSearch(); };
 
-  if (localMeta.aiInterview) return <div className="flex flex-col h-full bg-deep-space p-8 text-center text-text2 italic">AI Interview in progress (stub)</div>;
+  if (localMeta.aiInterview?.isActive) {
+      return (
+          <InterviewView 
+              note={localMeta} 
+              workspace={workspace} 
+              onUpdate={onUpdate}
+              onComplete={() => {}}
+          />
+      );
+  }
 
   return (
     <div className="flex flex-col h-full text-text overflow-hidden relative group/editor bg-deep-space transition-colors duration-500">
@@ -132,6 +228,20 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note: initialMeta, workspace, o
                   {isHeaderOpen ? <ChevronDown size={12}/> : <ChevronRight size={12}/>} Properties
               </div>
               <div className="flex items-center gap-3">
+                  {characterState && (
+                      <div className="flex items-center gap-2 bg-panel2 rounded px-2 py-0.5 border border-border" onClick={e => e.stopPropagation()}>
+                          <Layers size={12} className="text-accent" />
+                          <select 
+                            className="bg-transparent text-[10px] font-bold uppercase text-text focus:outline-none"
+                            value={activeFormId}
+                            onChange={(e) => handleFormChange(e.target.value)}
+                          >
+                              <option value="base">Base Form</option>
+                              {characterState.forms.map(f => <option key={f.formId} value={f.formId}>{f.name}</option>)}
+                          </select>
+                          <IconButton size="sm" className="h-4 w-4" onClick={handleCreateForm}><Plus size={10} /></IconButton>
+                      </div>
+                  )}
                   {localMeta.unresolved && (
                       <div className="flex items-center gap-2">
                           <Badge variant="danger">UNRESOLVED</Badge>
@@ -178,11 +288,20 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note: initialMeta, workspace, o
                       <label className="text-[10px] uppercase text-text2 font-bold">Folder</label>
                       <div className="relative">
                           <Select value={localMeta.folderId} onChange={handleFolderChange} className="pl-7">
-                              {(Object.values(workspace.folders) as Folder[]).sort((a,b)=>a.name.localeCompare(b.name)).map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                              {(Object.values(workspace.folders) as Folder[]).filter(f=>f.type==='user'||f.id==='inbox').sort((a,b)=>a.name.localeCompare(b.name)).map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                           </Select>
                           <FolderIcon size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-text2 pointer-events-none" />
                       </div>
                   </div>
+                  {characterState && (
+                      <div className="flex flex-col gap-1">
+                          <label className="text-[10px] uppercase text-text2 font-bold">Snapshots</label>
+                          <div className="flex gap-2">
+                              <Button size="sm" onClick={handleCreateSnapshot} className="w-full flex gap-1 justify-center"><Camera size={12} /> Capture</Button>
+                              {characterState.snapshots.length > 0 && <Badge>{characterState.snapshots.length}</Badge>}
+                          </div>
+                      </div>
+                  )}
                   <div className="col-span-full flex items-center gap-4 mt-1 pt-2 border-t border-border/50 text-[10px] text-text2 font-mono">
                       <span>Created: {new Date(localMeta.createdAt).toLocaleDateString()}</span>
                       <span>Updated: {new Date(localMeta.updatedAt).toLocaleString()}</span>
@@ -199,12 +318,24 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note: initialMeta, workspace, o
                  <span className="text-xs font-mono">Loading Body...</span>
              </div>
          ) : (
-             <HybridEditor ref={editorRef} doc={localContent} noteId={localMeta.id} onDocChange={handleContentChange} readOnly={readMode} workspace={workspace} onOpenNote={onOpenNote || ((id)=>console.log(id))} onSearchStateChange={setSearchState} />
+             <HybridEditor 
+                ref={editorRef} 
+                doc={localContent} 
+                noteId={localMeta.id} 
+                onDocChange={handleContentChange} 
+                readOnly={readMode} 
+                workspace={workspace} 
+                onOpenNote={onOpenNote || ((id)=>console.log(id))} 
+                onSearchStateChange={setSearchState}
+                activeFormId={activeFormId}
+                forms={characterState?.forms}
+                onUpdateFormOverride={handleUpdateFormOverride}
+             />
          )}
       </div>
 
       <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-panel/90 backdrop-blur-md border border-border px-4 py-2 rounded-full shadow-soft flex items-center gap-1 z-20">
-          <button onClick={() => { onToggleReadMode(!readMode); }} className={`p-2 hover:bg-panel2 rounded-full transition-colors flex items-center gap-2 ${readMode ? 'text-accent' : 'text-text2 hover:text-text'}`}>
+          <button onClick={() => { performSave(localMeta, localContent); onToggleReadMode(!readMode); }} className={`p-2 hover:bg-panel2 rounded-full transition-colors flex items-center gap-2 ${readMode ? 'text-accent' : 'text-text2 hover:text-text'}`}>
               {readMode ? <Eye size={18}/> : <Box size={18}/>}
               <span className="text-xs font-bold">{readMode ? 'Reader' : 'Editor'}</span>
           </button>

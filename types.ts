@@ -32,6 +32,240 @@ export interface UnresolvedOrigin {
     createdAt: number;
 }
 
+// Milestone 6: Character Block Schema
+
+export type CharacterBlockType = 
+    | 'identity' 
+    | 'summary' 
+    | 'appearance' 
+    | 'personality' 
+    | 'stats' 
+    | 'abilities' 
+    | 'items' 
+    | 'relationships' 
+    | 'history' 
+    | 'locations' 
+    | 'tags' 
+    | 'authorNotes'
+    | 'unknown'
+    // Legacy types from Step 1 for migration safety (optional, but good practice)
+    | 'text' | 'keyValue' | 'statGrid' | 'meter';
+
+export interface CharacterBlock {
+    blockId: string;
+    type: CharacterBlockType;
+    title: string;
+    collapsed: boolean;
+    payload: any; // Type-specific payload handled by registry
+}
+
+// -- Block Payloads (Canonical) --
+
+export interface IdentityPayload {
+    fields: Array<{ key: string; value: string }>;
+}
+
+export interface RichTextPayload {
+    doc: any; // TipTap doc JSON
+}
+
+export interface StatsPayload {
+    stats: Array<{ name: string; value: number; max?: number }>;
+}
+
+export interface AbilitiesPayload {
+    abilities: Array<{ name: string; descriptionDoc?: any; tags?: string[] }>;
+}
+
+export interface ItemsPayload {
+    items: Array<{ name: string; qty: number; notes?: string }>;
+}
+
+export interface ReferencePayload {
+    links: Array<{ targetNoteId: string; label?: string; relation?: string }>;
+}
+
+export interface TagsPayload {
+    tags: string[];
+}
+
+// Milestone 6 Step 7: Structured Refs
+export interface LocationsPayload {
+  schemaVersion: 1;
+  originPlaceId: string | null;
+  currentPlaceId: string | null;
+  otherPlaces: Array<{
+    id: string; // row id
+    placeId: string;
+    label?: string;
+    from?: string;
+    to?: string;
+    notesDoc?: any;
+  }>;
+}
+
+export interface RelationshipItem {
+    relId: string;
+    targetCharacterId: string;
+    type: string;
+    direction?: "to" | "from" | "mutual";
+    strength?: number; // 1-5
+    status?: string;
+    notesDoc?: any;
+    tags?: string[];
+}
+
+export interface RelationshipsPayload {
+  schemaVersion: 1;
+  relationships: RelationshipItem[];
+}
+
+// Legacy Payloads for characterBlocks.ts
+export interface TextBlockPayload { doc: any; }
+export interface KeyValueBlockPayload { fields: Array<{ key: string; value: string }>; }
+export interface StatGridBlockPayload { columns: string[]; rows: any[]; }
+export interface MeterBlockPayload { items: any[]; }
+
+// --- TEMPLATES ---
+export type TemplateKind = 'character';
+
+export type MappingRuleType = 'setField' | 'appendList' | 'richTextFrom';
+
+export interface InterviewMappingRule {
+    type: MappingRuleType;
+    moduleType: CharacterBlockType;
+    field?: string;
+    listField?: string;
+    richTextField?: string;
+    fromAnswerId: string;
+}
+
+export interface InterviewQuestion {
+    id: string;
+    prompt: string; 
+    help?: string;
+    type: "shortText" | "longText" | "number" | "singleSelect" | "multiSelect" | "boolean";
+    required?: boolean;
+    options?: Array<{ value: string; label: string }>;
+    defaultValue?: any;
+    targetHint?: { moduleType?: CharacterBlockType; field?: string };
+    
+    // Legacy support for M4 compatibility if needed (can be optional)
+    text?: string; 
+    kind?: string;
+}
+
+export interface InterviewDefinition {
+    version: number;
+    title: string;
+    intro?: string;
+    questions: InterviewQuestion[];
+    mapping: InterviewMappingRule[];
+}
+
+export interface CharacterTemplate {
+    schemaVersion: number;
+    templateId: string;
+    kind: TemplateKind;
+    name: string;
+    description?: string;
+    strictMode: boolean; // Milestone 6 Step 8
+    requiredModules: CharacterBlockType[];
+    suggestedModules: CharacterBlockType[];
+    defaultOrder: CharacterBlockType[];
+    moduleDefaults: Partial<Record<CharacterBlockType, {
+        title?: string;
+        collapsed?: boolean;
+        fieldHints?: Record<string, string>;
+    }>>;
+    validationHooks?: {
+        onSave?: Array<{ id: string; message: string; level: 'warn' | 'error' }>;
+    };
+    interview?: InterviewDefinition;
+    // Milestone 6 Step 8: Validation Rules
+    validation?: {
+        requiredIdentityFields?: string[];
+        statRanges?: {
+            perStat?: Record<string, { min: number, max: number }>;
+        };
+        requireNonUnresolvedPlaces?: boolean;
+        customWarnings?: Array<{
+            id: string;
+            label: string;
+            ruleType: "fieldRequired";
+            moduleType: string;
+            fieldPath: string;
+            message: string;
+        }>;
+    };
+}
+
+export interface TemplatesIndex {
+    schemaVersion: number;
+    updatedAt: number;
+    templates: Array<{
+        templateId: string;
+        kind: TemplateKind | 'note' | 'other';
+        name: string;
+        description?: string;
+        file: string;
+    }>;
+}
+
+// Milestone 6 Step 6: Multi-state Character Data
+
+export interface ModuleOverride {
+    schemaVersion: 1;
+    payload?: any;
+    title?: string;
+    collapsed?: boolean;
+    deleted?: boolean;
+}
+
+export interface CharacterForm {
+    formId: string;
+    name: string;
+    createdAt: number;
+    updatedAt: number;
+    overrides: Record<string, ModuleOverride>; // Keyed by blockId
+    localBlocks: CharacterBlock[]; // Modules exclusive to this form
+    meta?: { color?: string };
+}
+
+export interface CharacterSnapshot {
+    snapshotId: string;
+    label: string;
+    formId: string;
+    date?: string;
+    createdAt: number;
+    resolved: {
+        templateId: string;
+        blocks: CharacterBlock[]; // Frozen resolved blocks
+    };
+}
+
+export interface CharacterData {
+    templateId: string;
+    blocks: CharacterBlock[]; // Base blocks
+    forms: {
+        schemaVersion: 1;
+        activeFormId: string;
+        order: string[];
+        items: Record<string, CharacterForm>;
+    };
+    snapshots: {
+        schemaVersion: 1;
+        activeSnapshotId?: string | null;
+        order: string[];
+        items: Record<string, CharacterSnapshot>;
+    };
+    // Legacy support fields (can be removed after full migration, or kept optional)
+    templateStrict?: boolean;
+    templateHintsByType?: Partial<Record<CharacterBlockType, { fieldHints?: Record<string, string> }>>;
+    templateStrictOverride?: boolean | null; // Milestone 6 Step 8
+    importedFrom?: { originalNoteId: string; exportedAt: number }; // Milestone 6 Step 9
+}
+
 export interface DiskNote {
   schemaVersion: number; 
   noteId: string;
@@ -54,7 +288,9 @@ export interface DiskNote {
       unresolvedOrigins?: UnresolvedOrigin[];
       [key: string]: any;
     };
+    characterState?: CharacterState; // Legacy interim state
   };
+  characterData?: CharacterData; // Milestone 6 new schema
   content: {
     format: 'tiptap';
     version: number; 
@@ -84,12 +320,74 @@ export interface IndexEntry {
     excerpt: string; 
     folderId: string; 
     outboundLinks?: string[]; 
+    // M6 Step 7: References for aggregation
+    refs?: {
+        places: string[];
+        characters: string[];
+    };
 }
 
 export interface IndexData {
     schemaVersion: number;
     updatedAt: number;
     notes: Record<string, IndexEntry>;
+}
+
+// Milestone 6 Step 9: Export Types
+export interface CharacterBundleBase {
+    bundleSchemaVersion: 1;
+    exportedAt: number;
+    sourceApp: { name: string, version?: string };
+    character: {
+        noteId: string;
+        title: string;
+        noteType: "character";
+        status: NoteStatus;
+        unresolved: boolean;
+        universeTag: string | null;
+        folderPath: string;
+        createdAt: number;
+        updatedAt: number;
+    };
+    template: {
+        templateId: string;
+        templateName?: string;
+        strictMode?: boolean;
+    };
+    references: {
+        places: Array<{ noteId: string, title?: string, unresolved?: boolean }>;
+        characters: Array<{ noteId: string, title?: string, unresolved?: boolean }>;
+        notes: Array<{ noteId: string, title?: string, unresolved?: boolean }>;
+    };
+}
+
+export interface CharacterBundle extends CharacterBundleBase {
+    selection: {
+        formId: string;
+        formName: string;
+        snapshotId?: string | null;
+    };
+    resolvedSheet: {
+        blocks: CharacterBlock[];
+        normalized: {
+            identity?: any;
+            stats?: Record<string, number>;
+            abilities?: any[];
+            items?: any[];
+            relationships?: any[];
+            locations?: any;
+            tags?: string[];
+            narrativeSummary?: string;
+        };
+    };
+}
+
+export interface CharacterFullBundle extends CharacterBundleBase {
+    characterData: CharacterData;
+    selection: {
+        currentFormId: string;
+        currentSnapshotId?: string | null;
+    };
 }
 
 // --- CONFIGURATION SCHEMAS ---
@@ -102,11 +400,36 @@ export interface ValidationRule {
     data: any;
 }
 
+// Milestone 6 Step 8: Validation Settings
+export interface CharacterValidationSettings {
+    schemaVersion: 1;
+    enabled: boolean;
+    mode: "warnings" | "silent";
+    defaultSeverity: "warning" | "error";
+    statRanges: {
+        enabled: boolean;
+        defaults: { min: number; max: number };
+        perStat?: Record<string, { min: number; max: number }>;
+    };
+    identityRules: {
+        enabled: boolean;
+        requiredFields: string[];
+    };
+    unresolvedPlaceLinks: {
+        enabled: boolean;
+    };
+    conflictingPaths: {
+        enabled: boolean;
+        groups: Array<{ id: string; label: string; keys: string[] }>;
+    };
+}
+
 export interface SettingsData {
     schemaVersion: number;
     updatedAt: number;
     ui: {
         theme: string;
+        accentColor?: string; // Custom accent color
         reduceMotion: boolean;
     };
     universeTags: {
@@ -122,6 +445,12 @@ export interface SettingsData {
         strictMode: boolean;
         rules: ValidationRule[];
     };
+    characterValidation?: CharacterValidationSettings; // M6 Step 8
+}
+
+export interface ModuleDefinition {
+    type: string;
+    defaultData: any;
 }
 
 export interface NoteTemplate {
@@ -129,12 +458,17 @@ export interface NoteTemplate {
     name: string;
     kind: "blank" | "structured";
     contentBlocks: any[];
+    defaultModules?: ModuleDefinition[];
+    requiredModules?: string[];
+    interviewQuestions?: InterviewQuestion[]; // Legacy M4
+    suggestedModules?: string[];
+    defaultOrder?: string[];
 }
 
 export interface AIInterviewTemplate {
     templateId: string;
     name: string;
-    questions: { id: string; text: string; kind: string; options?: string[] }[];
+    questions: InterviewQuestion[];
     outputPlan: any;
 }
 
@@ -143,7 +477,7 @@ export interface NoteTypeDefinition {
     name: string;
     defaultTemplateId: string;
     templates: NoteTemplate[];
-    aiInterviewTemplates: AIInterviewTemplate[];
+    aiInterviewTemplates: AIInterviewTemplate[]; // Legacy? Merged into NoteTemplate for M6
     icon?: string; 
     description?: string; 
 }
@@ -186,16 +520,9 @@ export interface MapsData {
     maps: Record<string, MapData>;
 }
 
-export interface CollectionsData {
-    schemaVersion: number;
-    updatedAt: number;
-    collections: Record<ID, Collection>;
-}
-
 // --- SEARCH TYPES ---
 export interface SearchFilters {
     folderId: string | 'all';
-    collectionId?: string | 'all'; 
     includeSubfolders: boolean;
     universeTagId: string | 'all' | 'none';
     type: string | 'all';
@@ -207,7 +534,7 @@ export interface SearchFilters {
 export type PaneLayout = 'single' | 'splitVertical' | 'splitHorizontal' | 'quad';
 export type PaneId = 'paneA' | 'paneB' | 'paneC' | 'paneD';
 
-export type ViewType = 'note' | 'starmap' | 'glossary' | 'glossary_term' | 'pending_review' | 'missing' | 'search';
+export type ViewType = 'note' | 'starmap' | 'glossary' | 'glossary_term' | 'pending_review' | 'missing' | 'search' | 'character';
 
 export interface ViewRef {
   id: string; 
@@ -228,6 +555,17 @@ export interface NoteTab extends ViewRef {
     noteId: string;
   };
   state: NoteViewState;
+}
+
+export interface CharacterViewState {
+    scrollY: number;
+}
+export interface CharacterTab extends ViewRef {
+    kind: 'character';
+    payload: {
+        noteId: string;
+    };
+    state: CharacterViewState;
 }
 
 export interface StarMapViewState {
@@ -302,7 +640,7 @@ export interface MissingTab extends ViewRef {
   state: any;
 }
 
-export type Tab = NoteTab | StarMapTab | GlossaryTab | GlossaryEntryTab | PendingReviewTab | SearchResultsTab | MissingTab;
+export type Tab = NoteTab | CharacterTab | StarMapTab | GlossaryTab | GlossaryEntryTab | PendingReviewTab | SearchResultsTab | MissingTab;
 
 export interface PaneState {
   id: PaneId;
@@ -376,7 +714,6 @@ export interface Workspace {
 
   notes: Record<ID, Note>;
   folders: Record<ID, Folder>;
-  collections: Record<ID, Collection>; 
   pinnedNoteIds: ID[]; 
   
   // Persisted Configs
@@ -394,8 +731,12 @@ export interface Workspace {
     pending: Record<ID, PendingTerm>;
     index: GlossaryIndex;
     occurrences: GlossaryOccurrences; // Milestone 5 Step 7
+    ignoreList: string[]; // List of normalized keys to ignore for pending
   };
   
+  // Milestone 6: Templates
+  characterTemplates: Record<string, CharacterTemplate>;
+
   // Runtime Indexes
   indexes: {
     title_to_note_id: Record<string, ID>;
@@ -411,6 +752,22 @@ export interface Workspace {
 
   created_at: ISODate;
   updated_at: ISODate;
+}
+
+// Milestone 6: Character State (Legacy Support Type Alias)
+export interface CharacterState {
+    activeFormId: string;
+    forms: CharacterForm[]; // Kept for type compat if needed, but CharacterData.forms is source of truth
+    snapshots: CharacterSnapshot[];
+}
+
+export interface InterviewState {
+    isActive: boolean;
+    step: 'start' | 'questions' | 'review' | 'complete';
+    currentQuestionIndex: number;
+    answers: Record<string, string | string[]>; // questionId -> answer
+    transcript: any[];
+    generatedModules?: any[]; // Staged for review
 }
 
 export interface Note {
@@ -431,14 +788,23 @@ export interface Note {
   excerpt?: string; 
   pinned: boolean; 
   
-  metadata?: any; 
+  metadata?: {
+      kind: 'general' | 'character' | string;
+      data: any;
+      characterState?: CharacterState; // Legacy Character state
+      characterData?: CharacterData; // Milestone 6 Schema
+      refs?: { places: string[]; characters: string[]; };
+  }; 
   system?: any; 
-  aiInterview?: any; 
+  aiInterview?: InterviewState; // Milestone 6: Updated
   
   tag_ids: TagID[];
   content_plain?: string; 
   
   outbound_note_ids?: string[];
+  
+  // Transient flag to block save to disk (Milestone 6 Step 8)
+  _preventSave?: boolean; 
 }
 
 export interface Folder {
@@ -449,14 +815,6 @@ export interface Folder {
   createdAt: Timestamp;
   updatedAt: Timestamp;
   order: number;
-}
-
-export interface Collection {
-    id: ID;
-    name: string;
-    noteIds: ID[]; 
-    createdAt: Timestamp;
-    updatedAt: Timestamp;
 }
 
 export interface Tag {

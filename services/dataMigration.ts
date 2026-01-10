@@ -1,7 +1,9 @@
 
-import { Workspace, Note } from '../types';
+import { Workspace, Note, CharacterData, CharacterForm } from '../types';
 import { parseWikiLinks } from './linkService';
 import { ensureUnresolvedNote } from './storageService';
+import { createCharacterBlock, normalizeCharacterBlock } from './characterModuleRegistry';
+import { ensureFormsStructure } from './characterResolution';
 
 // --- Helper: Convert legacy string/v1 to v2 doc with InternalLinks ---
 
@@ -33,15 +35,10 @@ export const migrateContent = (note: Note, workspace: Workspace): { doc: any, ch
                 }
             });
 
-            // If empty line, ensure empty text node or paragraph structure logic?
-            // TipTap starter kit handles empty paragraphs fine usually, but empty text node is invalid.
             if (contentNodes.length === 0) {
-                // Empty paragraph
                 return { type: 'paragraph' };
             }
             
-            // Check for specific block types (headers, lists) based on markdown syntax
-            // Simple markdown parser fallback for Heading/List
             const textContent = line;
             if (textContent.startsWith('# ')) {
                 return { type: 'heading', attrs: { level: 1 }, content: contentNodes.map(fixHeadingContent) };
@@ -50,9 +47,6 @@ export const migrateContent = (note: Note, workspace: Workspace): { doc: any, ch
             } else if (textContent.startsWith('### ')) {
                 return { type: 'heading', attrs: { level: 3 }, content: contentNodes.map(fixHeadingContent) };
             } else if (textContent.startsWith('- ')) {
-                // Lists are complex in basic migration. For MVP migration step 2, treat as paragraph with bullet char
-                // To do real list migration requires state machine.
-                // We'll treat as paragraph to prevent data loss, formatting can be fixed by user or advanced parser later.
                 return { type: 'paragraph', content: contentNodes };
             }
 
@@ -62,23 +56,14 @@ export const migrateContent = (note: Note, workspace: Workspace): { doc: any, ch
     } 
     // Case 2: TipTap JSON v1 (Legacy Doc)
     else if (typeof content === 'object' && (!content.version || content.version < 2)) {
-        // Traverse and replace text nodes containing [[links]]
-        doc = JSON.parse(JSON.stringify(content.doc || content)); // Handle {doc: ...} or direct doc
-        
+        doc = JSON.parse(JSON.stringify(content.doc || content));
         const traverse = (node: any) => {
-            if (node.type === 'text' && node.text && node.text.includes('[[')) {
-                // Replace this text node with array of nodes (text + links)
-                // BUT traverse expects to modify node in place or return replacement?
-                // Standard recursive traversals on JSON trees are tricky for splitting nodes.
-                // We'll rely on the fact that 'content' is an array in parent.
-            }
             if (node.content) {
                 node.content = node.content.flatMap((child: any) => {
                     if (child.type === 'text' && child.text && child.text.includes('[[')) {
                         const tokens = parseWikiLinks(child.text);
                         return tokens.map(token => {
                             if (token.kind === 'text') return { type: 'text', text: token.value, marks: child.marks };
-                            // Link
                             const targetId = resolveOrCreateIndex(token.title, workspace, note.id);
                             return {
                                 type: 'internalLink',
@@ -87,8 +72,6 @@ export const migrateContent = (note: Note, workspace: Workspace): { doc: any, ch
                                     display: token.display,
                                     fallbackTitle: token.title
                                 },
-                                // Internal Links might behave better without marks or with them? 
-                                // Marks (bold/italic) allowed.
                                 marks: child.marks 
                             };
                         });
@@ -99,11 +82,11 @@ export const migrateContent = (note: Note, workspace: Workspace): { doc: any, ch
             }
         };
         traverse(doc);
-        changed = true; // Assume changed if we ran this pass (optimization: check if actually replaced)
+        changed = true; 
     } 
     // Case 3: V2 or newer
     else {
-        doc = content.doc;
+        doc = content.doc ?? content;
         changed = false;
     }
 
@@ -111,19 +94,108 @@ export const migrateContent = (note: Note, workspace: Workspace): { doc: any, ch
 };
 
 const resolveOrCreateIndex = (title: string, workspace: Workspace, sourceId: string): string => {
-    // Check index
     const existingId = workspace.indexes.title_to_note_id[title];
     if (existingId) return existingId;
-
-    // Create unresolved
-    // This mutates workspace state in memory. Storage persistence handles saving.
     return ensureUnresolvedNote(workspace, title, sourceId);
 };
 
 const fixHeadingContent = (node: any) => {
-    // Remove markdown markers from text content if simple conversion
     if (node.type === 'text') {
         return { ...node, text: node.text.replace(/^#+\s/, '') };
     }
     return node;
+};
+
+// --- Milestone 6: Character Data Migration ---
+
+const generateId = () => Math.random().toString(36).substring(2, 15);
+
+const createDefaultCharacterData = (): CharacterData => ({
+    templateId: 'character_default',
+    blocks: [
+        createCharacterBlock('identity'),
+        createCharacterBlock('summary'),
+        createCharacterBlock('appearance'),
+        createCharacterBlock('personality'),
+        createCharacterBlock('stats'),
+        createCharacterBlock('abilities'),
+        createCharacterBlock('items'),
+        createCharacterBlock('relationships'),
+        createCharacterBlock('history'),
+        createCharacterBlock('locations'),
+        createCharacterBlock('tags'),
+        createCharacterBlock('authorNotes')
+    ],
+    forms: {
+        schemaVersion: 1,
+        activeFormId: 'base',
+        order: ['base'],
+        items: {
+            'base': {
+                formId: 'base',
+                name: 'Base',
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+                overrides: {},
+                localBlocks: []
+            }
+        }
+    },
+    snapshots: {
+        schemaVersion: 1,
+        activeSnapshotId: null,
+        order: [],
+        items: {}
+    }
+});
+
+export const ensureCharacterData = (note: Note): { data: CharacterData, changed: boolean } => {
+    let changed = false;
+    let data = note.metadata?.characterData;
+
+    // If missing completely, initialize
+    if (!data) {
+        data = createDefaultCharacterData();
+        changed = true;
+    } else {
+        // 1. Migrate blocks
+        if (!data.blocks) { data.blocks = []; changed = true; }
+        
+        data.blocks = data.blocks.map(b => {
+            const normalized = normalizeCharacterBlock(b);
+            if (JSON.stringify(normalized) !== JSON.stringify(b)) {
+                changed = true;
+                return normalized;
+            }
+            return b;
+        });
+
+        // 2. Ensure Forms Structure (Step 6 Migration)
+        const structured = ensureFormsStructure(data);
+        if (JSON.stringify(structured) !== JSON.stringify(data)) {
+            data = structured;
+            changed = true;
+        }
+    }
+
+    return { data, changed };
+};
+
+export const validateCharacterNote = (note: Note): Note => {
+    if (note.type !== 'Character') return note;
+
+    const { data, changed } = ensureCharacterData(note);
+    
+    if (changed) {
+        return {
+            ...note,
+            metadata: {
+                ...note.metadata,
+                kind: 'character', 
+                characterData: data
+            }
+        };
+    }
+    
+    return note;
 };

@@ -1,7 +1,6 @@
-
 import React from 'react';
 import { PaneSystemState, PaneState, Tab, PaneId, Workspace, Note, NoteTab, StarMapTab, GlossaryTab, MissingTab, PaneLayout, GlossaryEntryTab, PendingReviewTab } from '../types';
-import { X, Globe, FileText, Book, FileWarning, Maximize2, ZoomIn, ZoomOut, Plus, Map as MapIcon, ChevronRight, Minimize2, Edit3, Clock } from 'lucide-react';
+import { X, Globe, FileText, Book, FileWarning, Maximize2, ZoomIn, ZoomOut, Plus, Map as MapIcon, ChevronRight, Minimize2, Edit3, Clock, User } from 'lucide-react';
 import { DndContext, DragOverlay, useSensor, useSensors, PointerSensor, KeyboardSensor, DragStartEvent, DragEndEvent, closestCenter, defaultDropAnimationSideEffects, DropAnimation, useDroppable } from '@dnd-kit/core';
 import { SortableContext, useSortable, horizontalListSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -26,7 +25,7 @@ const SortableTab: React.FC<{
             {...listeners}
             onClick={(e) => { e.stopPropagation(); onSelect(); }}
             className={`
-                group flex items-center gap-2 px-3 h-full border-r border-border cursor-pointer min-w-[120px] max-w-[200px] select-none
+                group flex items-center gap-2 px-3 h-full border-r border-border cursor-pointer min-w-[120px] max-w-[200px] select-none flex-shrink-0
                 ${isActive 
                     ? 'bg-bg text-text border-t-2 border-t-accent' 
                     : 'bg-panel text-text2 hover:bg-panel2 hover:text-text border-t-2 border-t-transparent'}
@@ -71,8 +70,18 @@ const EmptyPaneState: React.FC<{
 );
 
 const PaneTabStrip: React.FC<{ pane: PaneState; isFocused: boolean; onSelectTab: (id: string) => void; onCloseTab: (id: string) => void; onFocus: () => void; }> = ({ pane, isFocused, onSelectTab, onCloseTab, onFocus }) => {
+    const handleWheel = (e: React.WheelEvent) => {
+        if (e.deltaY !== 0) {
+            e.currentTarget.scrollLeft += e.deltaY;
+        }
+    };
+
     return (
-        <div className={`flex items-center h-9 border-b border-border overflow-x-auto no-scrollbar select-none bg-panel relative ${isFocused ? 'bg-bg' : ''}`} onClick={(e) => { e.stopPropagation(); onFocus(); }}>
+        <div 
+            className={`flex items-center h-9 border-b border-border overflow-x-auto no-scrollbar select-none bg-panel relative ${isFocused ? 'bg-bg' : ''}`} 
+            onClick={(e) => { e.stopPropagation(); onFocus(); }}
+            onWheel={handleWheel}
+        >
              <SortableContext items={pane.tabs.map(t => t.id)} strategy={horizontalListSortingStrategy} id={pane.id}>
                 {pane.tabs.map(tab => <SortableTab key={tab.id} tab={tab} isActive={tab.id === pane.activeTabId} onSelect={() => onSelectTab(tab.id)} onClose={() => onCloseTab(tab.id)} />)}
             </SortableContext>
@@ -156,7 +165,6 @@ const Pane: React.FC<{
     );
 };
 
-// --- Drop Zones ---
 const SplitDropZone: React.FC<{ id: string, style: React.CSSProperties, active: boolean }> = ({ id, style, active }) => {
     const { setNodeRef } = useDroppable({ id });
     if (!active) return null;

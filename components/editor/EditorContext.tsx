@@ -1,11 +1,16 @@
 
 import React, { createContext, useContext } from 'react';
-import { Workspace } from '../../types';
+import { Workspace, CharacterForm } from '../../types';
 
 interface EditorContextProps {
     workspace: Workspace;
     onOpenNote: (id: string) => void;
     onOpenTerm?: (id: string) => void; 
+    
+    // Milestone 6: Character State
+    activeFormId?: string;
+    forms?: CharacterForm[];
+    onUpdateFormOverride?: (moduleId: string, data: any) => void;
 }
 
 const EditorContext = createContext<EditorContextProps | null>(null);

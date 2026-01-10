@@ -3,6 +3,49 @@ import { Node, mergeAttributes, Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import React from 'react';
 import katex from 'katex';
+import { ReactNodeViewRenderer, NodeViewWrapper } from '@tiptap/react';
+import ModuleWrapper from './modules/ModuleWrapper';
+
+// --- MODULE BLOCK EXTENSION ---
+export const ModuleBlock = Node.create({
+    name: 'moduleBlock',
+    group: 'block',
+    draggable: true,
+    atom: true,
+
+    addAttributes() {
+        return {
+            moduleId: {
+                default: null,
+            },
+            moduleType: {
+                default: 'generic',
+            },
+            data: {
+                default: {},
+            },
+            collapsed: {
+                default: false,
+            }
+        };
+    },
+
+    parseHTML() {
+        return [
+            {
+                tag: 'div[data-type="module-block"]',
+            },
+        ];
+    },
+
+    renderHTML({ HTMLAttributes }) {
+        return ['div', mergeAttributes(HTMLAttributes, { 'data-type': 'module-block' })];
+    },
+
+    addNodeView() {
+        return ReactNodeViewRenderer(ModuleWrapper);
+    },
+});
 
 // --- HEADING ID EXTENSION ---
 export const HeadingId = Extension.create({

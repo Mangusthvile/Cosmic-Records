@@ -1,5 +1,4 @@
 
-
 import React, { useEffect, useRef, useImperativeHandle, forwardRef, useState, useCallback } from 'react';
 import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -20,7 +19,7 @@ import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import Placeholder from '@tiptap/extension-placeholder';
 import MenuBar from './MenuBar';
-import { MathBlock, CollapsibleBlock, CollapsibleSummary, CollapsibleContent, HeadingId } from './Extensions';
+import { MathBlock, CollapsibleBlock, CollapsibleSummary, CollapsibleContent, HeadingId, ModuleBlock } from './Extensions';
 import { SearchExtension, SearchPluginKey } from './SearchExtension';
 import { InternalLink } from './InternalLink';
 import { GlossaryLink } from './GlossaryLink';
@@ -28,7 +27,7 @@ import { getSuggestionOptions } from './LinkSuggestion';
 import { EditorContextProvider } from './EditorContext';
 import { vaultService, noteContentToPlainText } from '../../services/vaultService';
 import { migrateContent } from '../../services/dataMigration';
-import { Workspace, Note } from '../../types';
+import { Workspace, Note, CharacterForm } from '../../types';
 import { ensureUnresolvedNote, normalizeKey, lookupGlossaryTermId, addPendingTerm } from '../../services/storageService';
 import { Button } from '../ui/Primitives';
 import DefinerTooltip from '../DefinerTooltip';
@@ -51,6 +50,11 @@ interface HybridEditorProps {
     onOpenTerm?: (id: string) => void;
     onSearchStateChange?: (state: { index: number, count: number }) => void;
     linkMode?: 'note' | 'glossary'; 
+    
+    // Milestone 6
+    activeFormId?: string;
+    forms?: CharacterForm[];
+    onUpdateFormOverride?: (moduleId: string, data: any) => void;
 }
 
 interface GlossarySuggestionState {
@@ -73,20 +77,29 @@ interface DefinerState {
 
 const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({ 
     doc, noteId, onDocChange, readOnly = false, workspace, 
-    onOpenNote, onOpenTerm, onSearchStateChange, linkMode = 'note' 
+    onOpenNote, onOpenTerm, onSearchStateChange, linkMode = 'note',
+    activeFormId, forms, onUpdateFormOverride
 }, ref) => {
     
     const [glossarySuggestion, setGlossarySuggestion] = useState<GlossarySuggestionState | null>(null);
     const [definerState, setDefinerState] = useState<DefinerState | null>(null);
     const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const loadedIdRef = useRef<string | null>(null);
 
     // 1. Prepare Content (Resolve Paths + Migrate Legacy)
     const prepareContent = async (rawContent: any) => {
+        // Validate Content
+        let safeContent = rawContent;
+        if (!rawContent || (typeof rawContent === 'object' && !rawContent.type)) {
+            console.warn("Invalid doc content detected, using empty default.");
+            safeContent = { type: 'doc', content: [] };
+        }
+
         const existingNote = workspace.notes[noteId];
         // If noteId is actually a termId, create a fake note container for migration utils
         const note: Note = existingNote || { 
             id: noteId, 
-            content: rawContent, 
+            content: safeContent, 
             title: 'Term', 
             status: 'Canon',
             type: 'General',
@@ -99,7 +112,7 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
             tag_ids: []
         };
         
-        const noteWithCurrentContent = { ...note, content: rawContent };
+        const noteWithCurrentContent = { ...note, content: safeContent };
         const { doc: migratedDoc, changed } = migrateContent(noteWithCurrentContent, workspace);
         
         if (changed) {
@@ -151,6 +164,7 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
         CollapsibleBlock,
         CollapsibleSummary,
         CollapsibleContent,
+        ModuleBlock, // Milestone 6
         SearchExtension.configure({
             searchTerm: '',
             results: [],
@@ -170,6 +184,9 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
         extensions: extensions as any,
         content: { type: 'doc', content: [] }, // Initial empty, loaded via effect
         onUpdate: ({ editor }) => {
+            // Safety: Clear glossary suggestion on any edit to prevent stale ranges
+            setGlossarySuggestion(null);
+            
             onDocChange(editor.getJSON());
             
             // Search State Update
@@ -187,8 +204,9 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
             if (linkMode === 'glossary') {
                 scanForGlossaryTerms(editor);
             }
-            // Clear tooltip on selection change (prevents stale tooltips)
+            // Clear tooltip and suggestions on selection change (prevents stale tooltips)
             setDefinerState(null);
+            setGlossarySuggestion(null);
         },
         editable: !readOnly,
         editorProps: {
@@ -200,25 +218,20 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
 
     // Load Content Effect
     useEffect(() => {
-        if (editor && doc) {
+        if (editor && doc && noteId !== loadedIdRef.current) {
             prepareContent(doc).then(prepared => {
-                const currentJSON = JSON.stringify(editor.getJSON());
-                const newJSON = JSON.stringify(prepared);
-                if (currentJSON !== newJSON) {
-                    // Use editor.setContent which supports emitUpdate: false
-                    // This prevents the onUpdate callback from firing, avoiding loops.
-                    (editor as any).setContent(prepared, false);
-                }
+                editor.commands.setContent(prepared);
+                loadedIdRef.current = noteId;
             });
         }
     }, [doc, noteId, editor]);
 
     // Imperative Handle
     useImperativeHandle(ref, () => ({
-        setSearchTerm: (term: string) => editor?.commands.setSearchTerm(term),
-        findNext: () => editor?.commands.findNext(),
-        findPrevious: () => editor?.commands.findPrevious(),
-        clearSearch: () => editor?.commands.clearSearch(),
+        setSearchTerm: (term: string) => (editor?.commands as any).setSearchTerm(term),
+        findNext: () => (editor?.commands as any).findNext(),
+        findPrevious: () => (editor?.commands as any).findPrevious(),
+        clearSearch: () => (editor?.commands as any).clearSearch(),
         getSearchState: () => {
             if (!editor) return { index: 0, count: 0 };
             const state = SearchPluginKey.getState(editor.state);
@@ -236,34 +249,22 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
             // Debounce
             if (hoverTimeoutRef.current) clearTimeout(hoverTimeoutRef.current);
             
-            // Ignore if dragging or if user typed recently (simple approximation: no typing event listener here, but debounce helps)
-            if (e.buttons > 0) return; // Dragging
+            // Ignore if dragging or if user typed recently
+            if (e.buttons > 0) return;
 
             hoverTimeoutRef.current = setTimeout(() => {
                 const view = editor.view;
+                if (!view || view.isDestroyed) return; // Safety check
+
                 const pos = view.posAtCoords({ left: e.clientX, top: e.clientY });
                 
                 if (pos) {
                     const $pos = view.state.doc.resolve(pos.pos);
-                    // Extract word at hover position
-                    // We need to find word boundaries.
-                    // Simple logic: grab text node, regex for word around offset
-                    const textNode = $pos.parent.child($pos.index());
-                    if (textNode.isText && textNode.text) {
-                        const offsetInNode = $pos.parentOffset - ($pos.nodeBefore ? $pos.nodeBefore.nodeSize : 0); // Approximation, offset is absolute in parent
-                        // Correct way: use resolved pos info
-                        // pos.pos is absolute. 
-                        // Let's get the range of the word at pos.
-                        const resolvedPos = view.state.doc.resolve(pos.pos);
+                    
+                    if ($pos.parent.isTextblock) {
+                        const text = $pos.parent.textContent;
+                        const offset = $pos.parentOffset; 
                         
-                        // Use regex to find word boundaries around offset
-                        // Text node start pos:
-                        const start = resolvedPos.start();
-                        const text = resolvedPos.parent.textContent;
-                        const offset = resolvedPos.pos - start;
-                        
-                        // Regex to grab word around cursor
-                        // Matches letters, numbers, apostrophes, hyphens
                         const wordRegex = /[\w-']+/g;
                         let match;
                         let foundWord = null;
@@ -276,6 +277,7 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
                         }
 
                         if (foundWord) {
+                            // Case-insensitive exact lookup first
                             const termId = lookupGlossaryTermId(workspace, foundWord);
                             if (termId) {
                                 setDefinerState({
@@ -292,14 +294,9 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
                     }
                 }
                 
-                // If we get here, no match or no hover. Clear unless it was manual trigger locked? 
-                // Hover tooltip should disappear if we move away.
-                // We only clear if we are NOT over the tooltip itself (handled by pointer-events in tooltip or portal logic?)
-                // DefinerTooltip uses portal. We can't detect hover on it easily from here.
-                // Actually, if we move the mouse, we update. If we move to empty space, we clear.
                 setDefinerState(null);
 
-            }, 100); // 100ms Debounce
+            }, 200); // 200ms Debounce
         };
 
         const dom = editor.view.dom;
@@ -326,19 +323,17 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
                 } else {
                     // Grab word at cursor
                     const $pos = editor.state.selection.$from;
-                    // Similar logic to hover, but simpler selection expansion?
-                    // Use TipTap text expansion?
-                    // We'll reimplement simple word grabber from range
-                    const range = editor.state.doc.resolve(selection.from);
-                    const start = range.start();
-                    const fullText = range.parent.textContent;
-                    const offset = selection.from - start;
-                    const wordRegex = /[\w-']+/g;
-                    let match;
-                    while ((match = wordRegex.exec(fullText)) !== null) {
-                        if (match.index <= offset && match.index + match[0].length >= offset) {
-                            text = match[0];
-                            break;
+                    if ($pos.parent.isTextblock) {
+                        const start = $pos.start();
+                        const fullText = $pos.parent.textContent;
+                        const offset = selection.from - start;
+                        const wordRegex = /[\w-']+/g;
+                        let match;
+                        while ((match = wordRegex.exec(fullText)) !== null) {
+                            if (match.index <= offset && match.index + match[0].length >= offset) {
+                                text = match[0];
+                                break;
+                            }
                         }
                     }
                 }
@@ -366,12 +361,6 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
     // Definer Actions
     const handleOpenDefinition = () => {
         if (definerState?.termId) {
-            // Open Definition Widget with term
-            // We need to trigger widget state update. 
-            // We don't have direct access to widget state setter here.
-            // We can dispatch an event or use the EditorContext if we expand it.
-            // Dispatch custom event which App/WidgetBar listens to?
-            // Existing 'glossary-click' event was used for this. Let's reuse or add 'open-definition'.
             window.dispatchEvent(new CustomEvent('open-definition', { detail: { termId: definerState.termId } }));
             setDefinerState(null);
         }
@@ -381,9 +370,8 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
         if (definerState?.text) {
             addPendingTerm(workspace, definerState.text, { 
                 noteId, 
-                snippet: "Added from editor selection." // Could improve snippet extraction
+                snippet: "Added from editor selection."
             });
-            // Show feedback? Storage logs notification.
             setDefinerState(null);
         }
     };
@@ -454,6 +442,13 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
     const confirmGlossaryLink = () => {
         if (!editor || !glossarySuggestion) return;
         
+        // Critical Safeguard: Check if range is still valid in current document
+        const { from, to } = glossarySuggestion.range;
+        if (to > editor.state.doc.content.size) {
+            setGlossarySuggestion(null);
+            return;
+        }
+
         editor.chain()
             .focus()
             .deleteRange(glossarySuggestion.range)
@@ -483,7 +478,7 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
     };
 
     return (
-        <EditorContextProvider value={{ workspace, onOpenNote, onOpenTerm }}>
+        <EditorContextProvider value={{ workspace, onOpenNote, onOpenTerm, activeFormId, forms, onUpdateFormOverride }}>
             <div className="relative group/editor flex flex-col h-full">
                 {!readOnly && <MenuBar editor={editor} noteId={noteId} />}
                 <EditorContent editor={editor} className="flex-1 overflow-y-auto" />

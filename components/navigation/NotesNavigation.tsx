@@ -1,8 +1,7 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Workspace, Note, Folder, SearchFilters, NotesNavigationState } from '../../types';
-import { FolderOpen, Search, Pin, Inbox, Layers, FilePlus, FolderPlus, RefreshCw, X, Filter, AlertTriangle, FileText, ChevronDown, ChevronRight, MoreVertical } from 'lucide-react';
-import { createFolder, deleteFolder, moveNote, togglePin, renameFolder, createCollection, deleteCollection, addToCollection } from '../../services/storageService';
+import { FolderOpen, Search, Pin, Inbox, Layers, FilePlus, FolderPlus, RefreshCw, X, Filter, AlertTriangle, FileText, ChevronDown, ChevronRight, MoreVertical, Archive, Clock } from 'lucide-react';
+import { createFolder, deleteFolder, moveNote, togglePin, renameFolder, permanentDeleteNote } from '../../services/storageService';
 import { searchNotes, SearchResult } from '../../services/searchService';
 import { vaultService } from '../../services/vaultService';
 import { IconButton, Input, Separator } from '../ui/Primitives';
@@ -22,7 +21,6 @@ interface NotesNavigationProps {
 
 const DEFAULT_FILTERS: SearchFilters = {
     folderId: 'all',
-    collectionId: 'all',
     includeSubfolders: true,
     universeTagId: 'all',
     type: 'all',
@@ -40,7 +38,7 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
     const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
     const [isResyncing, setIsResyncing] = useState(false);
     const [moveModalState, setMoveModalState] = useState<{ isOpen: boolean, noteId: string | null }>({ isOpen: false, noteId: null });
-    const [contextMenu, setContextMenu] = useState<{ x: number, y: number, type: 'note' | 'folder' | 'collection' | 'bg', targetId?: string } | null>(null);
+    const [contextMenu, setContextMenu] = useState<{ x: number, y: number, type: 'note' | 'folder' | 'bg', targetId?: string } | null>(null);
     const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     // Sync Search
@@ -48,7 +46,7 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
         if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current);
         searchTimeoutRef.current = setTimeout(() => {
             const hasActiveFilters = 
-                searchFilters.folderId !== 'all' || searchFilters.collectionId !== 'all' ||
+                searchFilters.folderId !== 'all' ||
                 searchFilters.type !== 'all' || searchFilters.status !== 'all' || 
                 searchFilters.universeTagId !== 'all' || searchFilters.unresolved !== 'all';
 
@@ -62,7 +60,7 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
         return () => { if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current); };
     }, [searchQuery, searchFilters, workspace]);
 
-    const isSearchMode = !!searchQuery || (searchFilters.folderId !== 'all' || searchFilters.collectionId !== 'all' || searchFilters.type !== 'all' || searchFilters.status !== 'all' || searchFilters.universeTagId !== 'all' || searchFilters.unresolved !== 'all');
+    const isSearchMode = !!searchQuery || (searchFilters.folderId !== 'all' || searchFilters.type !== 'all' || searchFilters.status !== 'all' || searchFilters.universeTagId !== 'all' || searchFilters.unresolved !== 'all');
 
     // Actions
     const updateState = (partial: Partial<NotesNavigationState>) => onStateChange(partial);
@@ -74,7 +72,7 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
     const toggleFolder = (folderId: string) => updateState({ folderOpenState: { ...folderOpenState, [folderId]: !folderOpenState[folderId] } });
     const setSelectedSection = (id: string | null) => updateState({ selectedSection: id });
 
-    const handleContextMenu = (e: React.MouseEvent, type: 'note' | 'folder' | 'collection' | 'bg', targetId?: string) => {
+    const handleContextMenu = (e: React.MouseEvent, type: 'note' | 'folder' | 'bg', targetId?: string) => {
         e.preventDefault(); e.stopPropagation(); setContextMenu({ x: e.clientX, y: e.clientY, type, targetId });
     };
 
@@ -84,26 +82,49 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
     const handleMoveNote = (noteId: string, folderId: string) => { moveNote(workspace, noteId, folderId); onUpdateWorkspace({ ...workspace }); setMoveModalState({ isOpen: false, noteId: null }); };
     const handleTogglePin = (noteId: string) => { togglePin(workspace, noteId); onUpdateWorkspace({ ...workspace }); };
     const handleCreateFolder = () => { const name = prompt("New Folder Name:"); if (name) { createFolder(workspace, name); onUpdateWorkspace({...workspace}); }};
-    const handleCreateCollection = () => { const name = prompt("New Collection Name:"); if (name) { createCollection(workspace, name); onUpdateWorkspace({...workspace}); }};
-    const handleDeleteCollection = (id: string) => { if (confirm("Delete this collection?")) { deleteCollection(workspace, id); onUpdateWorkspace({...workspace}); }};
+    const handlePermanentDelete = async (noteId: string) => {
+        if (confirm("Permanently delete this note? This cannot be undone.")) {
+            await permanentDeleteNote(workspace, noteId);
+            onUpdateWorkspace({...workspace});
+        }
+    };
+    const handleArchive = (noteId: string) => {
+        const note = workspace.notes[noteId];
+        if (note) {
+            note.status = 'Archived';
+            note.folderId = 'archived'; // Move to system folder if not already
+            onUpdateWorkspace({...workspace});
+            vaultService.onNoteChange(note);
+        }
+    };
+    const handleRestore = (noteId: string) => {
+        const note = workspace.notes[noteId];
+        if (note) {
+            note.status = 'Draft';
+            note.folderId = 'inbox'; // Move back to inbox
+            onUpdateWorkspace({...workspace});
+            vaultService.onNoteChange(note);
+        }
+    };
 
     const getContextMenuItems = (): ContextMenuItem[] => {
         if (!contextMenu) return [];
         const { type, targetId } = contextMenu;
         if (type === 'bg') return [{ label: 'New Record', icon: FilePlus, onClick: () => onCreateNote('inbox') }, { label: 'New Folder', icon: FolderPlus, onClick: handleCreateFolder }];
         if (type === 'note' && targetId) {
-            const collections = Object.values(workspace.collections || {});
+            const note = workspace.notes[targetId];
             return [
                 { label: 'Open', onClick: () => onOpenNote(targetId) },
                 { label: 'Move to...', icon: FolderOpen, onClick: () => setMoveModalState({ isOpen: true, noteId: targetId }) },
                 { label: 'Pin/Unpin', icon: Pin, onClick: () => handleTogglePin(targetId) },
-                ...(collections.length > 0 ? [{ separator: true } as any, ...collections.map(c => ({ label: `Add to ${c.name}`, onClick: () => { addToCollection(workspace, c.id, targetId); onUpdateWorkspace({...workspace}); } }))] : []),
                 { separator: true },
-                { label: 'Delete', danger: true, icon: AlertTriangle, onClick: () => { const n = workspace.notes[targetId]; n.status = 'Archived'; onUpdateWorkspace({...workspace}); }}
-            ];
+                (note?.status as string) === 'Archived' 
+                    ? { label: 'Restore', icon: RefreshCw, onClick: () => handleRestore(targetId) }
+                    : { label: 'Archive', danger: true, icon: Archive, onClick: () => handleArchive(targetId) },
+                note?.status === 'Archived' ? { label: 'Permanently Delete', danger: true, icon: AlertTriangle, onClick: () => handlePermanentDelete(targetId) } : undefined
+            ].filter(Boolean) as ContextMenuItem[];
         }
         if (type === 'folder' && targetId) return [{ label: 'New Note', icon: FilePlus, onClick: () => onCreateNote(targetId) }, { label: 'Rename', onClick: () => handleRenameFolder(targetId) }, { label: 'Delete', danger: true, onClick: () => handleDeleteFolder(targetId) }];
-        if (type === 'collection' && targetId) return [{ label: 'Delete Collection', danger: true, onClick: () => handleDeleteCollection(targetId) }];
         return [];
     };
 
@@ -119,23 +140,22 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
         if (!selectedSection) return null;
         let notes: Note[] = [];
         const all = Object.values(workspace.notes) as Note[]; 
-        if (selectedSection.startsWith('collection:')) {
-            const colId = selectedSection.split(':')[1];
-            const col = workspace.collections[colId];
-            if (col) notes = col.noteIds.map(id => workspace.notes[id]).filter(Boolean);
-        } else {
-            switch(selectedSection) {
-                case 'pinned': notes = all.filter((n) => n.pinned); break; 
-                case 'inbox': notes = all.filter((n) => n.folderId === 'inbox'); break;
-                case 'unresolved': notes = all.filter((n) => n.unresolved || n.folderId === 'unresolved'); break;
-                case 'drafts': notes = all.filter((n) => n.status === 'Draft'); break;
-            }
+        switch(selectedSection) {
+            case 'pinned': notes = all.filter((n) => n.pinned); break; 
+            case 'inbox': notes = all.filter((n) => n.folderId === 'inbox' && n.status !== 'Archived'); break;
+            case 'unresolved': notes = all.filter((n) => n.unresolved || n.folderId === 'unresolved'); break;
+            case 'drafts': notes = all.filter((n) => n.status === 'Draft'); break;
+            case 'recent': notes = [...all].sort((a, b) => b.updatedAt - a.updatedAt).slice(0, 20); break;
+            case 'archived': notes = all.filter((n) => n.status === 'Archived' || n.folderId === 'archived'); break;
         }
-        return getSortedItems(notes);
+        return selectedSection === 'recent' ? notes : getSortedItems(notes);
     })();
 
     const renderFolder = (folder: Folder, depth: number) => {
         const isOpen = folderOpenState[folder.id];
+        // Exclude system folders from main tree
+        if (folder.id === 'inbox' || folder.id === 'unresolved' || folder.id === 'archived') return null;
+
         const childrenFolders = getSortedItems((Object.values(workspace.folders) as Folder[]).filter(f => f.parentId === folder.id));
         const childrenNotes = getSortedItems((Object.values(workspace.notes) as Note[]).filter(n => n.folderId === folder.id && n.status !== 'Archived'));
         const paddingLeft = (depth * 12) + 12;
@@ -143,7 +163,7 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
         return (
             <div key={folder.id}>
                 <div 
-                    className={`flex items-center gap-1 py-1 pr-2 cursor-pointer text-xs select-none hover:bg-panel2 group ${folder.id === 'inbox' || folder.id === 'unresolved' ? 'hidden' : ''}`}
+                    className={`flex items-center gap-1 py-1 pr-2 cursor-pointer text-xs select-none hover:bg-panel2 group`}
                     style={{ paddingLeft: `${paddingLeft}px` }}
                     onClick={() => toggleFolder(folder.id)}
                     onContextMenu={(e) => handleContextMenu(e, 'folder', folder.id)}
@@ -167,6 +187,7 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
                             >
                                  {note.unresolved ? <AlertTriangle size={12} className="text-danger flex-shrink-0" /> : <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${note.status === 'Canon' ? 'bg-success' : note.status === 'Experimental' ? 'bg-warning' : note.status === 'Draft' ? 'bg-text2' : 'bg-text2'}`}></span>}
                                  <span className={`truncate ${activeNoteId === note.id ? 'font-medium' : ''} ${note.unresolved ? 'text-danger italic' : ''}`}>{note.title || "Untitled"}</span>
+                                 {note.pinned && <Pin size={10} className="text-accent ml-auto opacity-70" />}
                             </div>
                         ))}
                     </div>
@@ -182,7 +203,6 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
                 <div className="flex items-center gap-1">
                     <IconButton size="sm" onClick={() => onCreateNote('inbox')} title="New Note"><FilePlus size={16}/></IconButton>
                     <IconButton size="sm" onClick={handleCreateFolder} title="New Folder"><FolderPlus size={16}/></IconButton>
-                    <IconButton size="sm" onClick={handleCreateCollection} title="New Collection"><Layers size={16}/></IconButton>
                     <IconButton size="sm" onClick={handleResync} title="Resync"><RefreshCw size={16} className={isResyncing ? "animate-spin text-accent" : ""} /></IconButton>
                 </div>
             </div>
@@ -226,9 +246,11 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
                         <div>
                             {[
                                 { id: 'pinned', label: 'Pinned', icon: Pin, count: (Object.values(workspace.notes) as Note[]).filter(n => n.pinned).length },
-                                { id: 'inbox', label: 'Inbox', icon: Inbox, count: (Object.values(workspace.notes) as Note[]).filter(n => n.folderId === 'inbox').length },
+                                { id: 'recent', label: 'Recent', icon: Clock, count: null },
+                                { id: 'inbox', label: 'Inbox', icon: Inbox, count: (Object.values(workspace.notes) as Note[]).filter(n => n.folderId === 'inbox' && n.status !== 'Archived').length },
                                 { id: 'unresolved', label: 'Unresolved', icon: AlertTriangle, count: workspace.indexes.unresolved_note_ids.length },
                                 { id: 'drafts', label: 'Drafts', icon: FileText, count: (Object.values(workspace.notes) as Note[]).filter(n => n.status === 'Draft').length },
+                                { id: 'archived', label: 'Archived', icon: Archive, count: (Object.values(workspace.notes) as Note[]).filter(n => n.status === 'Archived' || n.folderId === 'archived').length },
                             ].map(s => (
                                 <div 
                                     key={s.id}
@@ -236,21 +258,7 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
                                     className={`flex items-center justify-between px-3 py-1.5 text-xs rounded-md cursor-pointer transition-colors mb-0.5 select-none ${selectedSection === s.id ? 'bg-accent/10 text-accent' : 'text-text2 hover:bg-panel2 hover:text-text'}`}
                                 >
                                     <div className="flex items-center gap-2"><AppIcon icon={s.icon} size={14} /><span>{s.label}</span></div>
-                                    <span className="text-[10px] opacity-50">{s.count}</span>
-                                </div>
-                            ))}
-                        </div>
-                        <div className="pt-2">
-                            <div className="px-3 py-1 text-[10px] font-bold uppercase text-text2 tracking-widest">Collections</div>
-                            {Object.values(workspace.collections || {}).map(col => (
-                                <div 
-                                    key={col.id}
-                                    onClick={() => setSelectedSection(selectedSection === `collection:${col.id}` ? null : `collection:${col.id}`)}
-                                    onContextMenu={(e) => handleContextMenu(e, 'collection', col.id)}
-                                    className={`flex items-center justify-between px-3 py-1.5 text-xs rounded-md cursor-pointer transition-colors mb-0.5 select-none ${selectedSection === `collection:${col.id}` ? 'bg-accent/10 text-accent' : 'text-text2 hover:bg-panel2 hover:text-text'}`}
-                                >
-                                    <div className="flex items-center gap-2"><Layers size={14} /><span>{col.name}</span></div>
-                                    <span className="text-[10px] opacity-50">{col.noteIds.length}</span>
+                                    {s.count !== null && <span className="text-[10px] opacity-50">{s.count}</span>}
                                 </div>
                             ))}
                         </div>
@@ -258,7 +266,7 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
                         {selectedSection ? (
                             <div className="animate-in slide-in-from-left-2 duration-200">
                                 <div className="flex items-center justify-between px-2 mb-2">
-                                    <span className="text-[10px] font-bold uppercase text-accent tracking-wider">{selectedSection.startsWith('collection:') ? workspace.collections[selectedSection.split(':')[1]]?.name : selectedSection}</span>
+                                    <span className="text-[10px] font-bold uppercase text-accent tracking-wider">{selectedSection}</span>
                                     <button onClick={() => setSelectedSection(null)} className="text-[10px] text-text2 hover:text-text">Close</button>
                                 </div>
                                 {filteredList?.map(note => (
@@ -271,6 +279,7 @@ const NotesNavigation: React.FC<NotesNavigationProps> = ({
                                         <div className="flex items-center justify-between w-full min-w-0 gap-2">
                                             <span className={`text-xs font-medium truncate flex-1 ${note.unresolved ? 'text-danger italic' : ''}`}>{note.title}</span>
                                             {note.unresolved && <AlertTriangle size={10} className="text-danger flex-shrink-0" />}
+                                            {note.pinned && <Pin size={10} className="text-accent flex-shrink-0 opacity-70" />}
                                         </div>
                                     </div>
                                 ))}

@@ -30,7 +30,7 @@ const GlossaryNavigation: React.FC<GlossaryNavigationProps> = ({
     // We rely on GlossaryIndex for performance, not full term objects
     const indexTerms = workspace.glossary.index.terms;
     const termIds = Object.keys(indexTerms);
-    const pendingTerms = Object.values(workspace.glossary.pending);
+    const pendingTerms = Object.values(workspace.glossary.pending) as PendingTerm[];
     const availableUniverses = workspace.settings.universeTags.tags;
     const occurrences = workspace.glossary.occurrences?.terms || {};
 

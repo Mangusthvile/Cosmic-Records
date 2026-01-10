@@ -1,7 +1,6 @@
-
 import React, { useState } from 'react';
 import { Workspace, SettingsData, HotkeysData, KeyBinding } from '../types';
-import { X, Monitor, Keyboard, Tag, Shield, Database, AlertTriangle, RefreshCw, Plus, Trash2 } from 'lucide-react';
+import { X, Monitor, Keyboard, Tag, Shield, Database, AlertTriangle, RefreshCw, Plus, Trash2, Palette, Stethoscope } from 'lucide-react';
 import { vaultService } from '../services/vaultService';
 import { Panel, Button, IconButton, Input, Select, Badge } from './ui/Primitives';
 
@@ -10,6 +9,7 @@ interface SettingsModalProps { workspace: Workspace; onUpdateWorkspace: (ws: Wor
 const SettingsModal: React.FC<SettingsModalProps> = ({ workspace, onUpdateWorkspace, onClose }) => {
   const [activeTab, setActiveTab] = useState<'general' | 'tags' | 'hotkeys' | 'maintenance'>('general');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [doctorResult, setDoctorResult] = useState<string | null>(null);
   const [newTag, setNewTag] = useState('');
 
   const updateSettings = (partial: Partial<SettingsData>) => {
@@ -30,7 +30,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ workspace, onUpdateWorksp
   const handleRemoveTag = (tag: string) => { if (confirm(`Remove tag "${tag}"?`)) updateSettings({ universeTags: { ...workspace.settings.universeTags, tags: workspace.settings.universeTags.tags.filter(t => t !== tag) } }); };
   const handleHotkeyChange = (index: number, newKey: string) => { const newBindings = [...workspace.hotkeys.bindings]; newBindings[index].keys = newKey; updateHotkeys(newBindings); };
   const handleRebuildIndex = async () => { if (!confirm("Rebuild index?")) return; setIsProcessing(true); await vaultService.rebuildIndex(); onUpdateWorkspace({...workspace}); setIsProcessing(false); };
-  const handleRepairVault = async () => { if (!confirm("Repair vault?")) return; setIsProcessing(true); await vaultService.resyncVault('full'); onUpdateWorkspace({...workspace}); setIsProcessing(false); };
+  const handleVaultDoctor = async () => { 
+      setIsProcessing(true); 
+      const res = await vaultService.runVaultDoctor(); 
+      setDoctorResult(res.message); 
+      onUpdateWorkspace({...workspace}); 
+      setIsProcessing(false); 
+  };
+
+  const accentColors = ['#38bdf8', '#a78bfa', '#34d399', '#f472b6', '#fbbf24', '#f87171'];
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -49,6 +57,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ workspace, onUpdateWorksp
                 <div className="flex-1 overflow-y-auto p-6 space-y-8 bg-panel">
                     {activeTab === 'general' && (
                         <div className="space-y-6">
+                            <section>
+                                <h3 className="text-xs font-bold uppercase tracking-widest text-text2 mb-4 flex items-center gap-2"><Palette size={14} /> Appearance</h3>
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-sm font-medium text-text">Accent Color</label>
+                                    <div className="flex gap-2">
+                                        {accentColors.map(color => (
+                                            <button key={color} onClick={() => updateSettings({ ui: { ...workspace.settings.ui, accentColor: color } })} className={`w-6 h-6 rounded-full border-2 ${workspace.settings.ui.accentColor === color ? 'border-white' : 'border-transparent'}`} style={{ backgroundColor: color }} />
+                                        ))}
+                                    </div>
+                                </div>
+                            </section>
                             <section>
                                 <h3 className="text-xs font-bold uppercase tracking-widest text-text2 mb-4 flex items-center gap-2"><Shield size={14} /> Validation</h3>
                                 <Toggle label="Strict Mode" description="Enforce validation rules on save." checked={workspace.settings.validation.strictMode} onChange={(v) => updateSettings({ validation: { ...workspace.settings.validation, strictMode: v } })} />
@@ -100,9 +119,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ workspace, onUpdateWorksp
                                 <Button onClick={handleRebuildIndex} disabled={isProcessing} size="sm"><RefreshCw size={14} className={isProcessing ? 'animate-spin mr-2' : 'mr-2'} /> Rebuild</Button>
                             </section>
                             <section className="bg-panel2 border border-border p-4 rounded-lg">
-                                <h3 className="text-sm font-bold text-text mb-2 flex items-center gap-2"><AlertTriangle size={16} className="text-warning"/> Repair</h3>
-                                <p className="text-xs text-text2 mb-4">Full consistency check.</p>
-                                <Button onClick={handleRepairVault} disabled={isProcessing} size="sm" variant="danger"><Shield size={14} className="mr-2"/> Repair</Button>
+                                <h3 className="text-sm font-bold text-text mb-2 flex items-center gap-2"><Stethoscope size={16} className="text-warning"/> Vault Doctor</h3>
+                                <p className="text-xs text-text2 mb-4">Detect and fix duplicate files and index inconsistencies.</p>
+                                <Button onClick={handleVaultDoctor} disabled={isProcessing} size="sm" variant="outline"><Shield size={14} className="mr-2"/> Scan & Repair</Button>
+                                {doctorResult && <div className="mt-2 text-xs text-success bg-success/10 p-2 rounded border border-success/20">{doctorResult}</div>}
                             </section>
                          </div>
                     )}

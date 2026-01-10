@@ -12,7 +12,7 @@ interface StarMapNavigationProps {
 }
 
 const StarMapNavigation: React.FC<StarMapNavigationProps> = ({ workspace, onOpenMap, onUpdateWorkspace }) => {
-    const maps = Object.values(workspace.maps.maps);
+    const maps = Object.values(workspace.maps.maps) as MapData[];
 
     const handleCreateMap = () => {
         const name = prompt("New Map Name:");

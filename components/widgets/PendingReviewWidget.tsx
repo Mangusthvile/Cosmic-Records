@@ -1,9 +1,10 @@
 
 import React, { useState } from 'react';
 import { WidgetProps } from './WidgetRegistry';
-import { Clock, Check, X, Merge, AlertTriangle } from 'lucide-react';
+import { Clock, Check, X, Merge, AlertTriangle, ChevronRight } from 'lucide-react';
 import { approvePendingTerm, mergePendingAsAlias, ignorePendingTerm, logNotification } from '../../services/storageService';
 import { Button } from '../ui/Primitives';
+import { Workspace, PendingTerm } from '../../types';
 
 interface PendingReviewWidgetState {
     selectedPendingId: string | null;
@@ -11,7 +12,7 @@ interface PendingReviewWidgetState {
 
 const PendingReviewWidget: React.FC<WidgetProps> = ({ workspace, onUpdateWorkspace, state, onStateChange }) => {
     const { selectedPendingId } = (state || {}) as PendingReviewWidgetState;
-    const pendingTerms = Object.values(workspace.glossary.pending).sort((a, b) => b.createdAt - a.createdAt);
+    const pendingTerms = (Object.values(workspace.glossary.pending) as PendingTerm[]).sort((a, b) => b.createdAt - a.createdAt);
     
     const updateState = (partial: any) => onStateChange({ ...state, ...partial });
 
@@ -109,5 +110,4 @@ const PendingReviewWidget: React.FC<WidgetProps> = ({ workspace, onUpdateWorkspa
     );
 };
 
-import { ChevronRight } from 'lucide-react';
 export default PendingReviewWidget;

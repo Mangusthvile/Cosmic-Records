@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { BookOpen, Plus, ExternalLink, Globe } from 'lucide-react';
@@ -7,8 +6,8 @@ import { Button } from './ui/Primitives';
 interface DefinerTooltipProps {
     x: number;
     y: number;
-    termId: string | null; // Null if no match found
-    text: string; // The text hovered/selected
+    termId: string | null; 
+    text: string; 
     definitionPreview?: string;
     universeScopes?: string[];
     onOpenDefinition: () => void;
@@ -22,40 +21,31 @@ const DefinerTooltip: React.FC<DefinerTooltipProps> = ({
     onOpenDefinition, onAddToPending, onClose, isLoading 
 }) => {
     const tooltipRef = useRef<HTMLDivElement>(null);
-    const [style, setStyle] = useState<React.CSSProperties>({ 
-        top: -9999, left: -9999, opacity: 0 
-    });
+    const [style, setStyle] = useState<React.CSSProperties>({ top: -9999, left: -9999, opacity: 0 });
 
     useEffect(() => {
-        // Positioning Logic
-        // We want the tooltip to be above the cursor/selection if space allows, else below.
-        // It must stay within viewport.
         if (tooltipRef.current) {
             const el = tooltipRef.current;
             const rect = el.getBoundingClientRect();
             const viewportWidth = window.innerWidth;
-            const viewportHeight = window.innerHeight;
             
-            let top = y - rect.height - 10; // Default above
-            let left = x - rect.width / 2;  // Centered
+            let top = y - rect.height - 10; 
+            let left = x - rect.width / 2;  
 
-            // Viewport collision
-            if (top < 10) top = y + 20; // Flip to below
+            if (top < 10) top = y + 20; 
             if (left < 10) left = 10;
             if (left + rect.width > viewportWidth - 10) left = viewportWidth - rect.width - 10;
 
             setStyle({ top, left, opacity: 1 });
         }
-    }, [x, y, termId, text]); // Re-calc on prop change
+    }, [x, y, termId, text]);
 
-    // Click outside to close (handled by parent typically, but we can add safety)
-    
     return createPortal(
         <div 
             ref={tooltipRef}
             className="fixed z-[9999] w-[280px] bg-panel border border-accent/30 rounded-lg shadow-2xl p-3 text-text pointer-events-auto flex flex-col gap-2 animate-in fade-in zoom-in-95 duration-100"
             style={style}
-            onMouseDown={(e) => e.stopPropagation()} // Prevent editor blur/deselection if possible
+            onMouseDown={(e) => e.stopPropagation()} 
         >
             {isLoading ? (
                 <div className="flex items-center gap-2 text-text2 text-xs">
@@ -63,14 +53,12 @@ const DefinerTooltip: React.FC<DefinerTooltipProps> = ({
                     Looking up...
                 </div>
             ) : termId ? (
-                // MATCH FOUND
                 <>
                     <div className="flex items-start justify-between">
                         <div>
                             <div className="flex items-center gap-2 mb-1">
                                 <BookOpen size={14} className="text-accent" />
                                 <span className="text-sm font-bold">{text}</span> 
-                                {/* If alias matches but primary is different, show primary? Logic handled by caller sending correct text/name */}
                             </div>
                             {universeScopes && universeScopes.length > 0 && (
                                 <div className="flex flex-wrap gap-1 mb-1">
@@ -93,16 +81,13 @@ const DefinerTooltip: React.FC<DefinerTooltipProps> = ({
                     </div>
                 </>
             ) : (
-                // NO MATCH
                 <>
                     <div className="flex items-center gap-2 text-text2 text-xs mb-1">
                         <BookOpen size={14} className="opacity-50" />
                         <span className="font-bold italic">"{text}"</span>
                         <span className="opacity-50 ml-auto text-[10px] uppercase">Unknown</span>
                     </div>
-                    <div className="text-xs text-muted">
-                        Term not found in glossary.
-                    </div>
+                    <div className="text-xs text-muted">Term not found in glossary.</div>
                     <div className="pt-2 mt-1 border-t border-border">
                         <Button size="sm" variant="outline" onClick={onAddToPending} className="w-full flex items-center justify-center gap-2 text-[10px]">
                             <Plus size={12} /> Add to Pending

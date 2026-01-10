@@ -1,18 +1,6 @@
-
 import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
-
-declare module '@tiptap/core' {
-  interface Commands<ReturnType> {
-    search: {
-      setSearchTerm: (searchTerm: string) => ReturnType;
-      findNext: () => ReturnType;
-      findPrevious: () => ReturnType;
-      clearSearch: () => ReturnType;
-    };
-  }
-}
 
 interface SearchOptions {
   searchTerm: string;
@@ -35,10 +23,6 @@ export const SearchExtension = Extension.create<SearchOptions>({
     return {
       setSearchTerm: (searchTerm: string) => ({ state, dispatch }) => {
         if (dispatch) {
-          // Logic handled in plugin state, we just dispatch a transaction with meta
-          // But to simplify, we trigger an update that the plugin listens to.
-          // However, PM plugins react to transactions. 
-          // We can use setMeta on the transaction.
           const tr = state.tr.setMeta('search', { searchTerm });
           dispatch(tr);
         }
@@ -50,8 +34,7 @@ export const SearchExtension = Extension.create<SearchOptions>({
         }
         return true;
       },
-      findNext: () => ({ state, dispatch, editor }) => {
-        // We need access to the current plugin state to know where to scroll
+      findNext: () => ({ state, dispatch }) => {
         const pluginState = SearchPluginKey.getState(state);
         if (!pluginState || !pluginState.results.length) return false;
 
@@ -62,7 +45,7 @@ export const SearchExtension = Extension.create<SearchOptions>({
             const result = pluginState.results[nextIndex];
             
             // Move selection and scroll
-            if (result) {
+            if (result && result.from <= state.doc.content.size) {
                 tr.setSelection(TextSelection.near(state.doc.resolve(result.from)));
                 tr.scrollIntoView();
             }
@@ -80,7 +63,7 @@ export const SearchExtension = Extension.create<SearchOptions>({
             const tr = state.tr.setMeta('search', { index: prevIndex });
             const result = pluginState.results[prevIndex];
             
-            if (result) {
+            if (result && result.from <= state.doc.content.size) {
                 tr.setSelection(TextSelection.near(state.doc.resolve(result.from)));
                 tr.scrollIntoView();
             }

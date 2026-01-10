@@ -29,6 +29,40 @@ const WidgetBar: React.FC<WidgetBarProps> = ({
     const [isPickerOpen, setIsPickerOpen] = useState(false);
     const [activeDragId, setActiveDragId] = useState<WidgetId | null>(null);
 
+    // --- Mode Awareness & Auto Open ---
+    useEffect(() => {
+        // If auto-open is enabled in settings
+        if (workspace.user_preferences?.widgets?.autoOpenRecommended) {
+            let recommended: WidgetId[] = [];
+            
+            if (activeMode === 'glossary') {
+                recommended = ['definition', 'pending_review', 'term_occurrences'];
+            } else if (activeMode === 'notes') {
+                recommended = ['definition']; // Ensure definition is always handy
+            }
+
+            // Check if recommended widgets are already open. If not, and we have space, open them.
+            setOpenWidgetIds(currentIds => {
+                const newIds = [...currentIds];
+                let changed = false;
+                
+                recommended.forEach(id => {
+                    if (!newIds.includes(id)) {
+                        if (newIds.length < 4) {
+                            newIds.push(id);
+                            changed = true;
+                            // Init state if needed
+                            if (!widgetStates[id]) {
+                                setWidgetStates(prev => ({ ...prev, [id]: WIDGET_REGISTRY[id].defaultState }));
+                            }
+                        }
+                    }
+                });
+                return changed ? newIds : currentIds;
+            });
+        }
+    }, [activeMode]); // Run only on mode change
+
     // Sync to persistence when state changes
     useEffect(() => {
         onStateChange({ openWidgetIds, widgetStates });
@@ -40,7 +74,7 @@ const WidgetBar: React.FC<WidgetBarProps> = ({
         const handleOpenDef = (e: CustomEvent) => {
             const termId = e.detail.termId;
             if (termId) {
-                // Force open definition widget if triggered explicitly by user action
+                // Force open definition widget if triggered explicitly
                 ensureWidgetOpen('definition');
                 setWidgetStates(prev => ({ ...prev, definition: { selectedTermId: termId } }));
             }
@@ -79,6 +113,7 @@ const WidgetBar: React.FC<WidgetBarProps> = ({
         setOpenWidgetIds(prev => {
             if (prev.includes(id)) return prev;
             if (prev.length >= 4) {
+                // Replace last one if full
                 const replaced = [...prev];
                 replaced.pop();
                 replaced.push(id);
@@ -87,6 +122,7 @@ const WidgetBar: React.FC<WidgetBarProps> = ({
             return [...prev, id];
         });
         
+        // Ensure default state exists
         if (!widgetStates[id]) {
             setWidgetStates(prev => ({ ...prev, [id]: WIDGET_REGISTRY[id].defaultState }));
         }
@@ -111,6 +147,7 @@ const WidgetBar: React.FC<WidgetBarProps> = ({
         setWidgetStates(prev => ({ ...prev, [id]: newState }));
     };
 
+    // Dnd Handlers
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
     const handleDragStart = (event: DragStartEvent) => {
@@ -129,6 +166,7 @@ const WidgetBar: React.FC<WidgetBarProps> = ({
         setActiveDragId(null);
     };
 
+    // Group widgets for picker
     const groups = {
         'General': AVAILABLE_WIDGETS.filter(w => w.group === 'General'),
         'Glossary': AVAILABLE_WIDGETS.filter(w => w.group === 'Glossary'),
@@ -137,7 +175,7 @@ const WidgetBar: React.FC<WidgetBarProps> = ({
 
     return (
         <div className="flex flex-col h-full bg-panel border-l border-border">
-            {/* Header */}
+            {/* 1. Header / Picker Toggle */}
             <div className="flex-shrink-0 border-b border-border bg-panel z-20">
                 <button 
                     onClick={() => setIsPickerOpen(!isPickerOpen)} 
@@ -147,6 +185,7 @@ const WidgetBar: React.FC<WidgetBarProps> = ({
                     {isPickerOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                 </button>
                 
+                {/* 2. Compact Picker */}
                 {isPickerOpen && (
                     <div className="px-3 pb-3 bg-panel border-b border-border animate-in slide-in-from-top-1 max-h-[400px] overflow-y-auto custom-scrollbar">
                         {Object.entries(groups).map(([groupName, widgets]) => (
@@ -186,7 +225,7 @@ const WidgetBar: React.FC<WidgetBarProps> = ({
                 )}
             </div>
             
-            {/* Stack */}
+            {/* 3. Stacked Active Widgets */}
             <div className="flex-1 flex flex-col min-h-0 bg-deep-space overflow-y-auto custom-scrollbar">
                 {openWidgetIds.length === 0 ? (
                     <div className="flex-1 flex items-center justify-center p-8 text-center text-xs text-text2 italic">
@@ -197,7 +236,7 @@ const WidgetBar: React.FC<WidgetBarProps> = ({
                         <SortableContext items={openWidgetIds} strategy={verticalListSortingStrategy}>
                             {openWidgetIds.map((id) => {
                                 const def = WIDGET_REGISTRY[id];
-                                if (!def) return null;
+                                if (!def) return null; // Safety
                                 const WidgetComponent = def.component;
                                 
                                 return (
@@ -231,12 +270,14 @@ const WidgetBar: React.FC<WidgetBarProps> = ({
     );
 };
 
+// --- Stack Item Wrapper ---
 const SortableWidgetContainer: React.FC<{ id: string, title: string, icon: React.ElementType, children: React.ReactNode, onClose: () => void }> = ({ id, title, icon: Icon, children, onClose }) => {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
     const style = { transform: CSS.Translate.toString(transform), transition, opacity: isDragging ? 0.3 : 1, zIndex: isDragging ? 50 : 'auto' };
     
     return (
         <div ref={setNodeRef} style={style} className="flex flex-col border-b border-border flex-1 min-h-[150px] bg-panel overflow-hidden transition-all">
+            {/* Widget Header */}
             <div className="flex items-center justify-between px-3 py-1.5 bg-panel2 border-b border-border select-none group flex-shrink-0">
                 <div className="flex items-center gap-2 text-text2 cursor-grab active:cursor-grabbing hover:text-text transition-colors" {...attributes} {...listeners}>
                     <GripVertical size={12} className="opacity-50 group-hover:opacity-100" />
@@ -245,6 +286,7 @@ const SortableWidgetContainer: React.FC<{ id: string, title: string, icon: React
                 </div>
                 <IconButton size="sm" onClick={onClose} className="opacity-50 group-hover:opacity-100"><X size={12} /></IconButton>
             </div>
+            {/* Widget Body */}
             <div className="flex-1 overflow-hidden relative bg-panel">
                 {children}
             </div>

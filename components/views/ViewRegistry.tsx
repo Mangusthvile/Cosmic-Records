@@ -1,13 +1,14 @@
 
 import React from 'react';
-import { Tab, Workspace, Note, NoteTab, StarMapTab, GlossaryTab, SearchResultsTab, MissingTab, GlossaryEntryTab, PendingReviewTab } from '../../types';
+import { Tab, Workspace, Note, NoteTab, StarMapTab, GlossaryTab, SearchResultsTab, MissingTab, GlossaryEntryTab, PendingReviewTab, CharacterTab } from '../../types';
 import NoteEditor from '../NoteEditor';
 import StarMap from '../StarMap';
 import GlossaryView from '../GlossaryView';
 import GlossaryEntryView from './GlossaryEntryView';
 import PendingReviewView from './PendingReviewView';
 import SearchResultsView from './SearchResultsView';
-import { FileWarning, FileText, Globe, Book, Search, ZoomIn, ZoomOut, Maximize2, Edit3, Clock } from 'lucide-react';
+import CharacterView from './CharacterView';
+import { FileWarning, FileText, Globe, Book, Search, ZoomIn, ZoomOut, Maximize2, Edit3, Clock, User } from 'lucide-react';
 import { IconButton } from '../ui/Primitives';
 
 // Registry Definition
@@ -40,6 +41,21 @@ export const ViewRegistry = {
             );
         },
         icon: FileText
+    },
+    character: {
+        component: ({ tab, workspace, onUpdateNote, onOpenNote }: any) => (
+            <CharacterView 
+                tab={tab as CharacterTab} 
+                workspace={workspace} 
+                onUpdateNote={onUpdateNote} 
+                onOpenNote={onOpenNote} 
+                // Implicitly onUpdateNote(note, workspace?) handles workspace updates if needed,
+                // but we can also expose an explicit prop if the component needs it.
+                // In App.tsx, onUpdateNote accepts (note, ws?).
+                onUpdateWorkspace={(ws: Workspace) => onUpdateNote(workspace.notes[tab.payload.noteId], ws)}
+            />
+        ),
+        icon: User
     },
     starmap: {
         component: ({ tab, workspace, onUpdateState, onOpenNote }: any) => {

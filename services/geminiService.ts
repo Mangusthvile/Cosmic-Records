@@ -1,5 +1,6 @@
+
 import { GoogleGenAI } from "@google/genai";
-import { Note, Workspace } from "../types";
+import { Note, Workspace, InterviewQuestion } from "../types";
 
 // Helper to get client securely
 const getClient = () => {
@@ -164,4 +165,52 @@ export const chatWithAssistant = async (
 
   const result = await chat.sendMessage({ message });
   return result.text;
+};
+
+// Milestone 6: Conduct Interview
+export const conductInterview = async (
+    answers: Record<string, string | string[]>, 
+    questions: InterviewQuestion[], 
+    workspace: Workspace
+): Promise<{ type: string, data: any }[]> => {
+    const client = getClient();
+    if (!client) throw new Error("API Key missing");
+
+    const prompt = `
+    You are a creative writing assistant for a sci-fi universe.
+    Construct a character profile based on the following interview answers.
+    
+    ANSWERS:
+    ${questions.map(q => `Q: ${q.text}\nA: ${answers[q.id]}`).join('\n\n')}
+    
+    Output strictly valid JSON array of modules. Each module has "type" (string) and "data" (object).
+    The available module types and their expected fields are:
+    
+    1. "summary": { shortSummary, longSummary }
+    2. "identity": { fullName, aliases: [], species, age, roleOrClass, affiliations: [], statusNote }
+    3. "appearance": { description, height, build, hair, eyes, distinguishingMarks: [] }
+    4. "personality": { traits: [], virtues: [], flaws: [], demeanor }
+    5. "abilities": { abilities: [{ name, type, description }], powerSystemNotes }
+    6. "history": { background, keyEvents: [{ title, dateText, description }] }
+    
+    Fill in as much detail as possible inferred from the answers. Be creative but consistent with the answers.
+    Return JSON only.
+    `;
+
+    try {
+        const response = await client.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json"
+            }
+        });
+        
+        const jsonStr = response.text || "[]";
+        const modules = JSON.parse(jsonStr);
+        return Array.isArray(modules) ? modules : [];
+    } catch (e) {
+        console.error("Interview generation failed", e);
+        throw new Error("Failed to generate character profile from AI.");
+    }
 };
