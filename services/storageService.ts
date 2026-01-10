@@ -414,13 +414,15 @@ export const createGlossaryTerm = (workspace: Workspace, term: string, definitio
     workspace.glossary.terms[id] = {
         id,
         term,
-        definition_rich: { type: "doc", content: [] },
+        aliases: [],
+        definitionDoc: { type: "doc", content: [] },
         definition_plain: definition,
-        referenced_term_ids: [],
-        universe_tag_ids: [],
-        sources: { originating_note_ids: [] },
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        linksTo: [],
+        universeTags: [],
+        sourceRefs: [],
+        isCanon: true,
+        createdAt: Date.now(),
+        updatedAt: Date.now()
     };
     return id;
 };

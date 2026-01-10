@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Note, Workspace, PaneState, PaneId, UIState, MissingTab, NoteTab, SidebarState, NavigationState, WidgetSystemState, SearchFilters } from './types';
+import { Note, Workspace, PaneState, PaneId, UIState, MissingTab, NoteTab, SidebarState, NavigationState, WidgetSystemState, SearchFilters, GlossaryEntryTab } from './types';
 import { createNote, updateNote, logNotification, createMap, createGlossaryTerm } from './services/storageService'; 
 import { vaultService } from './services/vaultService';
 import { generateTitle } from './services/geminiService';
@@ -105,16 +105,32 @@ const App: React.FC = () => {
 
   const handleOpenNote = (id: string) => {
       if (!workspace) return;
-      const note = workspace.notes[id];
-      if (note) {
-          paneSystem.openNoteTab(id, note.title);
-      } else {
-          paneSystem.openNoteTab(id, "Unresolved Link");
+      
+      // Check for Glossary Term
+      // Ideally IDs should have a prefix or check in glossary list
+      // For now, check if it's a known Note ID
+      if (workspace.notes[id]) {
+          paneSystem.openNoteTab(id, workspace.notes[id].title);
+          return;
       }
+      
+      // Fallback: Check if it's a Glossary Term ID (stored in terms)
+      // This is a bit weak if IDs collide, but UUIDs prevent that.
+      if (workspace.glossary.terms[id]) {
+          paneSystem.openGlossaryEntryTab(id);
+          return;
+      }
+
+      // If we reach here, it's an unresolved Note ID
+      paneSystem.openNoteTab(id, "Unresolved Link");
   };
 
   const handleOpenMap = (mapId?: string) => {
       paneSystem.openStarMapTab();
+  };
+
+  const handleOpenGlossaryEntry = (termId: string) => {
+      paneSystem.openGlossaryEntryTab(termId);
   };
 
   // --- Hotkeys ---
@@ -130,7 +146,7 @@ const App: React.FC = () => {
           findInNote: handleFind,
           newNote: () => {
               if (activeMode === 'starmap') { /* Map create */ }
-              else if (activeMode === 'glossary') { /* Term create */ }
+              else if (activeMode === 'glossary') { /* Term create via nav panel usually */ }
               else handleCreateNoteTrigger();
           }
       }
@@ -165,6 +181,12 @@ const App: React.FC = () => {
                                               payload: { ...noteTab.payload, originalKind: 'note', lastKnownTitle: tab.title }
                                           } as MissingTab;
                                       }
+                                  } else if (tab.kind === 'glossary_entry') {
+                                      const termTab = tab as GlossaryEntryTab;
+                                      const term = ws.glossary.terms[termTab.payload.termId];
+                                      if (term) return { ...tab, title: term.term };
+                                      // If term missing, let it render the view which handles "Term not found" gracefully or convert to missing
+                                      return tab;
                                   }
                                   return tab;
                               });
@@ -230,6 +252,12 @@ const App: React.FC = () => {
                        updates.push({ paneId, tabId: tab.id, title: note.title });
                   }
               }
+              if (tab.kind === 'glossary_entry') {
+                  const term = workspace.glossary.terms[(tab as GlossaryEntryTab).payload.termId];
+                  if (term && tab.title !== term.term) {
+                      updates.push({ paneId, tabId: tab.id, title: term.term });
+                  }
+              }
           });
       });
       updates.forEach(u => paneSystem.updateTabState(u.paneId, u.tabId, { title: u.title } as any));
@@ -283,7 +311,7 @@ const App: React.FC = () => {
       switch(activeMode) {
           case 'notes': return <NotesNavigation workspace={workspace} onOpenNote={handleOpenNote} onCreateNote={handleCreateNoteTrigger} onUpdateWorkspace={handleUpdateWorkspace} activeNoteId={activeNoteId} state={navState.notes} onStateChange={(p) => setNavState(prev => ({ ...prev, notes: { ...prev.notes, ...p } }))} />;
           case 'starmap': return <StarMapNavigation workspace={workspace} onOpenMap={handleOpenMap} onUpdateWorkspace={handleUpdateWorkspace} />;
-          case 'glossary': return <GlossaryNavigation workspace={workspace} onUpdateWorkspace={handleUpdateWorkspace} onOpenTerm={() => {}} />;
+          case 'glossary': return <GlossaryNavigation workspace={workspace} onUpdateWorkspace={handleUpdateWorkspace} onOpenTerm={handleOpenGlossaryEntry} />;
           default: return null;
       }
   };

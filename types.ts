@@ -205,7 +205,7 @@ export interface SearchFilters {
 export type PaneLayout = 'single' | 'splitVertical' | 'splitHorizontal' | 'quad';
 export type PaneId = 'paneA' | 'paneB' | 'paneC' | 'paneD';
 
-export type ViewType = 'note' | 'starmap' | 'glossary' | 'missing' | 'search';
+export type ViewType = 'note' | 'starmap' | 'glossary' | 'glossary_entry' | 'missing' | 'search';
 
 export interface ViewRef {
   id: string; 
@@ -255,6 +255,17 @@ export interface GlossaryTab extends ViewRef {
   state: GlossaryViewState;
 }
 
+export interface GlossaryEntryViewState {
+    mode: 'view' | 'edit';
+}
+export interface GlossaryEntryTab extends ViewRef {
+    kind: 'glossary_entry';
+    payload: {
+        termId: string;
+    };
+    state: GlossaryEntryViewState;
+}
+
 export interface SearchResultsViewState {
     scrollY: number;
 }
@@ -277,7 +288,7 @@ export interface MissingTab extends ViewRef {
   state: any;
 }
 
-export type Tab = NoteTab | StarMapTab | GlossaryTab | SearchResultsTab | MissingTab;
+export type Tab = NoteTab | StarMapTab | GlossaryTab | GlossaryEntryTab | SearchResultsTab | MissingTab;
 
 export interface PaneState {
   id: PaneId;
@@ -355,10 +366,7 @@ export interface Workspace {
 
   // Legacy
   tags: Record<TagID, Tag>;
-  glossary: {
-    terms: Record<GlossaryTermID, GlossaryTerm>;
-    extraction_queue: GlossaryExtractionItem[];
-  };
+  glossary: GlossaryData;
   
   // Runtime Indexes
   indexes: {
@@ -437,18 +445,32 @@ export interface UniverseTag {
   created_at: ISODate;
 }
 
+export interface GlossaryData {
+    terms: Record<GlossaryTermID, GlossaryTerm>;
+    pending: PendingTerm[];
+    ignoreList: string[]; // List of ignored terms
+}
+
 export interface GlossaryTerm {
   id: GlossaryTermID;
   term: string;                 
-  definition_rich: any;
-  definition_plain: string;
-  referenced_term_ids: GlossaryTermID[];
-  universe_tag_ids: UniverseTagID[]; 
-  sources: {
-    originating_note_ids: ID[]; 
-  };
-  created_at: ISODate;
-  updated_at: ISODate;
+  aliases: string[];
+  definitionDoc: any; // TipTap JSON
+  definition_plain: string; // Legacy/Fallback
+  universeTags: string[]; 
+  isCanon: true;
+  linksTo: GlossaryTermID[]; // Derived index
+  sourceRefs: string[]; // IDs of notes referencing this
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface PendingTerm {
+    id: ID;
+    term: string;
+    sourceNoteId?: string;
+    detectedAt: number;
+    tags?: string[];
 }
 
 export interface GlossaryExtractionItem {

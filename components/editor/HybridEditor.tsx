@@ -19,7 +19,7 @@ import Subscript from '@tiptap/extension-subscript';
 import Superscript from '@tiptap/extension-superscript';
 import Placeholder from '@tiptap/extension-placeholder';
 import MenuBar from './MenuBar';
-import { MathBlock, CollapsibleBlock, CollapsibleSummary, CollapsibleContent, HeadingId } from './Extensions';
+import { MathBlock, CollapsibleBlock, CollapsibleSummary, CollapsibleContent, HeadingId, GlossaryLink } from './Extensions';
 import { SearchExtension, SearchPluginKey } from './SearchExtension';
 import { InternalLink } from './InternalLink';
 import { getSuggestionOptions } from './LinkSuggestion';
@@ -52,6 +52,12 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({ doc, n
     // 1. Prepare Content (Resolve Paths + Migrate Legacy)
     const prepareContent = async (rawContent: any) => {
         // Migration Pass (v1/string -> v2)
+        // If it's a glossary term, we might need dummy note? Or check type.
+        // For glossary terms, noteId starts with 'glossary-'
+        if (noteId.startsWith('glossary-')) {
+             return rawContent || { type: 'doc', content: [] };
+        }
+
         const note = workspace.notes[noteId];
         // Ensure we pass the note object with correct content to migration
         const noteWithCurrentContent = { ...note, content: rawContent };
@@ -108,9 +114,14 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({ doc, n
             CollapsibleContent,
             HeadingId,
             SearchExtension,
+            GlossaryLink,
             InternalLink.configure({
                 resolver: (title: string) => workspace.indexes.title_to_note_id[title],
-                onUnknownTitle: (title: string) => ensureUnresolvedNote(workspace, title, noteId),
+                onUnknownTitle: (title: string) => {
+                    // Only auto-create if not in Glossary Mode
+                    if (noteId.startsWith('glossary-')) return null;
+                    return ensureUnresolvedNote(workspace, title, noteId);
+                },
                 suggestion: getSuggestionOptions(workspace, noteId),
             }),
         ],

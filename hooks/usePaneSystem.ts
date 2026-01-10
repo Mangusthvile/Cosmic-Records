@@ -1,6 +1,6 @@
 
 import { useState, useCallback } from 'react';
-import { PaneSystemState, PaneLayout, PaneId, Tab, NoteTab, StarMapTab, GlossaryTab, SearchResultsTab, SearchFilters } from '../types';
+import { PaneSystemState, PaneLayout, PaneId, Tab, NoteTab, StarMapTab, GlossaryTab, SearchResultsTab, GlossaryEntryTab, SearchFilters } from '../types';
 
 const DEFAULT_STATE: PaneSystemState = {
     layout: 'single',
@@ -180,6 +180,7 @@ export const usePaneSystem = () => {
                 if (t.kind === 'note' && newTab.kind === 'note') return (t as NoteTab).payload.noteId === (newTab as NoteTab).payload.noteId;
                 if (t.kind === 'starmap' && newTab.kind === 'starmap') return (t as StarMapTab).payload.mapId === (newTab as StarMapTab).payload.mapId;
                 if (t.kind === 'glossary' && newTab.kind === 'glossary') return (t as GlossaryTab).payload.scope === (newTab as GlossaryTab).payload.scope;
+                if (t.kind === 'glossary_entry' && newTab.kind === 'glossary_entry') return (t as GlossaryEntryTab).payload.termId === (newTab as GlossaryEntryTab).payload.termId;
                 if (t.kind === 'search' && newTab.kind === 'search') return (t as SearchResultsTab).payload.query === (newTab as SearchResultsTab).payload.query; // Rudimentary check
                 return false;
             });
@@ -216,6 +217,11 @@ export const usePaneSystem = () => {
         openTabInPane(state.focusedPaneId, tab);
     };
 
+    const openGlossaryEntryTab = (termId: string) => {
+        const tab: GlossaryEntryTab = { id: crypto.randomUUID(), kind: 'glossary_entry', title: "Term", version: 1, payload: { termId }, state: { mode: 'view' } };
+        openTabInPane(state.focusedPaneId, tab);
+    };
+
     const openSearchResultsTab = (query: string, filters: SearchFilters) => {
         const tab: SearchResultsTab = { id: crypto.randomUUID(), kind: 'search', title: `Search: ${query || 'All'}`, version: 1, payload: { query, filters }, state: { scrollY: 0 } };
         openTabInPane(state.focusedPaneId, tab);
@@ -249,7 +255,7 @@ export const usePaneSystem = () => {
             }
             return { ...prev, panes: { ...prev.panes, [paneId]: { ...pane, tabs: newTabs, activeTabId: newActiveId, history: newActiveId ? [...newHistory, newActiveId] : newHistory } } };
         });
-    };
+    }, []);
 
     const setActiveTab = (paneId: PaneId, tabId: string) => {
         setState(prev => {
@@ -292,6 +298,7 @@ export const usePaneSystem = () => {
                 if (t.kind !== tab.kind) return false;
                 if (t.kind === 'note') return (t as NoteTab).payload.noteId === (tab as NoteTab).payload.noteId;
                 if (t.kind === 'starmap') return (t as StarMapTab).payload.mapId === (tab as StarMapTab).payload.mapId;
+                if (t.kind === 'glossary_entry') return (t as GlossaryEntryTab).payload.termId === (tab as GlossaryEntryTab).payload.termId;
                 return false; 
             });
 
@@ -359,6 +366,7 @@ export const usePaneSystem = () => {
                 if (t.kind !== tab.kind) return false;
                 if (t.kind === 'note') return (t as NoteTab).payload.noteId === (tab as NoteTab).payload.noteId;
                 if (t.kind === 'starmap') return (t as StarMapTab).payload.mapId === (tab as StarMapTab).payload.mapId;
+                if (t.kind === 'glossary_entry') return (t as GlossaryEntryTab).payload.termId === (tab as GlossaryEntryTab).payload.termId;
                 return false;
             });
 
@@ -428,6 +436,7 @@ export const usePaneSystem = () => {
         openNoteTab,
         openStarMapTab,
         openGlossaryTab,
+        openGlossaryEntryTab,
         openSearchResultsTab,
         closeTab,
         closePane,

@@ -1,11 +1,12 @@
 
 import React from 'react';
-import { Tab, Workspace, Note, NoteTab, StarMapTab, GlossaryTab, SearchResultsTab, MissingTab } from '../../types';
+import { Tab, Workspace, Note, NoteTab, StarMapTab, GlossaryTab, SearchResultsTab, MissingTab, GlossaryEntryTab } from '../../types';
 import NoteEditor from '../NoteEditor';
 import StarMap from '../StarMap';
 import GlossaryView from '../GlossaryView';
+import GlossaryEntryView from './GlossaryEntryView';
 import SearchResultsView from './SearchResultsView';
-import { FileWarning, FileText, Globe, Book, Search, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { FileWarning, FileText, Globe, Book, Search, ZoomIn, ZoomOut, Maximize2, FileType } from 'lucide-react';
 import { IconButton } from '../ui/Primitives';
 
 // Registry Definition
@@ -63,6 +64,18 @@ export const ViewRegistry = {
             <GlossaryView tab={tab as GlossaryTab} workspace={workspace} onUpdateState={onUpdateState} />
         ),
         icon: Book
+    },
+    glossary_entry: {
+        component: ({ tab, workspace, onUpdateState, onCloseSelf, onUpdateWorkspace, onOpenNote }: any) => (
+            <GlossaryEntryView 
+                tab={tab as GlossaryEntryTab} 
+                workspace={workspace} 
+                onUpdateWorkspace={onUpdateWorkspace}
+                onCloseSelf={onCloseSelf} 
+                onOpenNote={onOpenNote}
+            />
+        ),
+        icon: FileType
     },
     search: {
         component: ({ tab, workspace, onUpdateState, onOpenNote }: any) => (

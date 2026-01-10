@@ -543,7 +543,7 @@ export class VaultService {
             this.safeReadJson<IndexData>(join(METADATA_DIR, FILES.INDEX), { schemaVersion: 1, updatedAt: 0, notes: {} }),
             this.safeReadJson<any>(join(METADATA_DIR, FILES.FOLDERS), {}),
             this.safeReadJson<any>(join(METADATA_DIR, FILES.TAGS), { tags: {} }),
-            this.safeReadJson<any>(join(METADATA_DIR, FILES.GLOSSARY), { terms: {}, extraction_queue: [] }),
+            this.safeReadJson<any>(join(METADATA_DIR, FILES.GLOSSARY), { terms: {}, pending: [], ignoreList: [] }),
             this.safeReadJson<SettingsData>(join(METADATA_DIR, FILES.SETTINGS), createDefaultSettings()),
             this.safeReadJson<TemplatesData>(join(METADATA_DIR, FILES.TEMPLATES), createDefaultTemplates()),
             this.safeReadJson<HotkeysData>(join(METADATA_DIR, FILES.HOTKEYS), createDefaultHotkeys()),
@@ -556,6 +556,13 @@ export class VaultService {
             [SYSTEM_IDS.INBOX]: { id: SYSTEM_IDS.INBOX, name: SYSTEM_DIRS.INBOX, type: 'system', parentId: null, createdAt: 0, updatedAt: 0, order: 0 },
             [SYSTEM_IDS.UNRESOLVED]: { id: SYSTEM_IDS.UNRESOLVED, name: SYSTEM_DIRS.UNRESOLVED, type: 'system', parentId: null, createdAt: 0, updatedAt: 0, order: 1 },
             [SYSTEM_IDS.ARCHIVED]: { id: SYSTEM_IDS.ARCHIVED, name: SYSTEM_DIRS.ARCHIVED, type: 'system', parentId: null, createdAt: 0, updatedAt: 0, order: 999 }
+        };
+
+        // Normalize glossary data if legacy
+        const normalizedGlossary = {
+            terms: glossaryData.terms || {},
+            pending: glossaryData.pending || [],
+            ignoreList: glossaryData.ignoreList || []
         };
 
         const ws: Workspace = {
@@ -573,7 +580,7 @@ export class VaultService {
             maps: mapsData,
 
             tags: tagsData?.tags || {},
-            glossary: glossaryData,
+            glossary: normalizedGlossary,
             
             indexes: {
                 title_to_note_id: {},
