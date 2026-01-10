@@ -449,16 +449,17 @@ export interface GlossaryData {
     terms: Record<GlossaryTermID, GlossaryTerm>;
     pending: PendingTerm[];
     ignoreList: string[]; // List of ignored terms
+    index?: Record<string, GlossaryTermID>; // In-memory index cache
 }
 
 export interface GlossaryTerm {
-  id: GlossaryTermID;
-  term: string;                 
+  id: GlossaryTermID; // Mapped from 'termId' on disk
+  term: string;       // Mapped from 'primaryName' on disk          
   aliases: string[];
-  definitionDoc: any; // TipTap JSON
+  definitionDoc: any; // Mapped from 'definitionRichText' on disk
   definition_plain: string; // Legacy/Fallback
-  universeTags: string[]; 
-  isCanon: true;
+  universeTags: string[]; // Mapped from 'universeScopes' on disk
+  isCanon: boolean;   // Mapped from 'canonical'
   linksTo: GlossaryTermID[]; // Derived index
   sourceRefs: string[]; // IDs of notes referencing this
   createdAt: Timestamp;

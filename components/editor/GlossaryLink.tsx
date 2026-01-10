@@ -37,8 +37,9 @@ export const GlossaryLink = Node.create({
         return [
             new InputRule({
                 find: /\{\{([^}]+)\}\}$/,
-                handler: ({ state, range, match }) => {
-                    // Placeholder for future implementation
+                handler: (props) => {
+                    const { state, range, match } = props;
+                    // Placeholder logic if needed
                 },
             }),
         ];
@@ -46,14 +47,21 @@ export const GlossaryLink = Node.create({
 });
 
 const GlossaryLinkComponent: React.FC<any> = ({ node }) => {
-    const { workspace } = useEditorContext();
-    const { termId, display, fallbackTerm } = node.attrs;
+    const context = useEditorContext();
+    const workspace = context.workspace;
+    
+    // Safety check for node attributes
+    const attrs = node.attrs || {};
+    const termId = attrs.termId;
+    const display = attrs.display;
+    const fallbackTerm = attrs.fallbackTerm;
+    
     const term = workspace.glossary.terms[termId];
     
-    const label = display || term?.term || fallbackTerm || "Unknown Term";
+    const label = display || (term ? term.term : null) || fallbackTerm || "Unknown Term";
     const isMissing = !term;
 
-    const tooltip = term ? `${term.term}: ${term.definition_plain?.substring(0, 100)}...` : "Term not found";
+    const tooltip = term ? `${term.term}: ${(term.definition_plain || '').substring(0, 100)}...` : "Term not found";
 
     return (
         <NodeViewWrapper as="span" className="inline-block align-middle mx-0.5 select-none">

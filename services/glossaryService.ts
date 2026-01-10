@@ -44,7 +44,7 @@ export const glossaryService = {
         };
 
         workspace.glossary.terms[id] = term;
-        vaultService.saveMetadataNow(workspace);
+        vaultService.saveGlossaryTerm(term);
         return term;
     },
 
@@ -52,13 +52,13 @@ export const glossaryService = {
         term.updatedAt = Date.now();
         term.definition_plain = noteContentToPlainText({ content: term.definitionDoc });
         workspace.glossary.terms[term.id] = term;
-        vaultService.saveMetadataNow(workspace);
+        vaultService.saveGlossaryTerm(term);
     },
 
     deleteTerm(workspace: Workspace, termId: string): void {
         if (workspace.glossary.terms[termId]) {
             delete workspace.glossary.terms[termId];
-            vaultService.saveMetadataNow(workspace);
+            vaultService.deleteGlossaryTerm(termId);
         }
     },
 
@@ -86,7 +86,7 @@ export const glossaryService = {
 
         workspace.glossary.pending = [pending, ...workspace.glossary.pending];
         logNotification(workspace, 'info', `New glossary candidate: ${termText}`, sourceNoteId);
-        vaultService.saveMetadataNow(workspace);
+        vaultService.savePendingTerm(pending);
     },
 
     approvePending(workspace: Workspace, pendingId: string): GlossaryTerm | null {
@@ -95,6 +95,7 @@ export const glossaryService = {
 
         const pending = workspace.glossary.pending[index];
         workspace.glossary.pending.splice(index, 1);
+        vaultService.deletePendingTerm(pendingId);
 
         // Create Real Term
         const term = this.createTerm(workspace, pending.term, undefined, pending.tags);
@@ -108,10 +109,15 @@ export const glossaryService = {
 
         const pending = workspace.glossary.pending[index];
         workspace.glossary.pending.splice(index, 1);
+        vaultService.deletePendingTerm(pendingId);
         
         if (!workspace.glossary.ignoreList) workspace.glossary.ignoreList = [];
         workspace.glossary.ignoreList.push(pending.term.toLowerCase());
         
-        vaultService.saveMetadataNow(workspace);
+        // Ignoring is a metadata update (glossary object level or settings), 
+        // for now we don't strictly persist ignore list as separate file in new architecture
+        // unless we add saveMetadataNow for glossary.json removal.
+        // For now, let's just trigger workspace change save which handles index/meta.
+        vaultService.onWorkspaceChange(workspace);
     }
 };

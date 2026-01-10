@@ -14,8 +14,11 @@ interface GlossaryEntryViewProps {
     onOpenNote: (id: string) => void;
 }
 
-const GlossaryEntryView: React.FC<GlossaryEntryViewProps> = ({ tab, workspace, onUpdateWorkspace, onCloseSelf, onOpenNote }) => {
-    const { termId } = tab.payload;
+const GlossaryEntryView: React.FC<GlossaryEntryViewProps> = (props) => {
+    const { tab, workspace, onUpdateWorkspace, onCloseSelf, onOpenNote } = props;
+    const payload = tab.payload;
+    const termId = payload.termId;
+    
     const term = workspace.glossary.terms[termId];
     
     // If deleted remotely or missing
