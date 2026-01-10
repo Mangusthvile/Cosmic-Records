@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef, useImperativeHandle, forwardRef, useState, useCallback } from 'react';
 import { useEditor, EditorContent, ReactRenderer } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
@@ -102,7 +101,7 @@ const HybridEditor = forwardRef<HybridEditorHandle, HybridEditorProps>(({
             content: safeContent, 
             title: 'Term', 
             status: 'Canon',
-            type: 'General',
+            type: 'general', // New strict type
             unresolved: false,
             universeTag: null,
             folderId: 'glossary',

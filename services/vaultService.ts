@@ -1,24 +1,29 @@
+
 import { 
     Workspace, Note, DiskNote, IndexEntry, IndexData, UIState,
     SettingsData, TemplatesData, HotkeysData, MapsData, NoteTypeDefinition,
-    GlossaryTerm, PendingTerm, GlossaryIndex, GlossaryOccurrences, NoteTemplate
+    GlossaryTerm, PendingTerm, GlossaryIndex, GlossaryOccurrences, NoteTemplate,
+    ModuleInstance, ModuleLayoutItem, PlaceData, Eras, CharacterData
 } from '../types';
 import { getHandle, setHandle } from './idb';
 import { VaultAdapter, FileSystemAccessAdapter, IndexedDbAdapter } from './adapters';
 import { join, dirname } from './path';
 import { extractOutboundLinks } from './linkService';
 import { templateService } from './templateService';
+import { migrateNoteToModular } from './dataMigration';
 
 // --- Constants ---
 const VAULT_HANDLE_KEY = 'cosmic_vault_handle';
 const METADATA_DIR = '.cosmicrecords';
-const BACKUP_DIR = '.cosmicrecords/backup';
-const QUARANTINE_DIR = '.cosmicrecords/quarantine';
 const GLOSSARY_TERMS_DIR = '.cosmicrecords/glossary/terms';
 const GLOSSARY_PENDING_DIR = '.cosmicrecords/glossary/pending';
 const GLOSSARY_INDEX_FILE = 'glossary_index.json';
 const GLOSSARY_OCCURRENCES_FILE = 'glossary_occurrences.json';
 const GLOSSARY_IGNORE_FILE = 'glossary_ignore.json';
+
+// Migration Constants
+export const MIGRATION_DIR = '.cosmicrecords/migrations';
+export const MIGRATION_STATE_FILE = 'migrationState.json';
 
 const ATTACHMENTS_DIR = 'Attachments';
 
@@ -44,12 +49,6 @@ const SYSTEM_DIRS = {
     INBOX: 'Inbox',
     UNRESOLVED: 'Unresolved',
     ARCHIVED: 'Archived'
-};
-
-const SYSTEM_IDS = {
-    INBOX: 'inbox',
-    UNRESOLVED: 'unresolved',
-    ARCHIVED: 'archived'
 };
 
 // --- Defaults ---
@@ -84,22 +83,24 @@ const createDefaultSettings = (): SettingsData => ({
 });
 
 const createDefaultTemplates = (): TemplatesData => {
+    // M7: Strictly 4 base types. 
     const characterTemplate: NoteTemplate = {
         templateId: 'character_default',
-        name: 'Detailed Character',
+        name: 'Character Profile',
         kind: 'structured',
         requiredModules: [],
         contentBlocks: [],
         defaultModules: [
-            { type: 'summary', defaultData: {} },
             { type: 'identity', defaultData: {} },
+            { type: 'summary', defaultData: {} },
             { type: 'appearance', defaultData: {} },
             { type: 'personality', defaultData: {} },
+            { type: 'stats', defaultData: {} },
             { type: 'abilities', defaultData: {} },
             { type: 'history', defaultData: {} },
         ],
         interviewQuestions: [
-            { id: 'q_name', prompt: "What is the character's full name and any common aliases?", type: 'shortText' },
+            { id: 'q_name', prompt: "What is their full name?", type: 'shortText' },
             { id: 'q_role', prompt: "What is their role, class, or occupation in the world?", type: 'shortText' },
             { id: 'q_background', prompt: "Briefly describe their background or origin story.", type: 'longText' }
         ],
@@ -108,15 +109,20 @@ const createDefaultTemplates = (): TemplatesData => {
     };
 
     const types: NoteTypeDefinition[] = [
-        { typeId: 'General', name: 'General Note', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'FileText', description: 'A blank canvas for any content.' },
-        { typeId: 'Character', name: 'Character', defaultTemplateId: 'character_default', templates: [characterTemplate], aiInterviewTemplates: [], icon: 'User', description: 'A structured profile for a person or entity.' },
-        { typeId: 'Place', name: 'Place', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Map', description: 'A location, planet, or region.' },
-        { typeId: 'Item', name: 'Item', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Box', description: 'An object, artifact, or technology.' },
-        { typeId: 'Event', name: 'Event', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Calendar', description: 'A historical or timeline event.' },
-        { typeId: 'Lore', name: 'Lore', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Scroll', description: 'History, religion, or culture.' },
-        { typeId: 'Canvas', name: 'Canvas', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Layout', description: 'A spatial board for visual organization.' },
+        { typeId: 'general', name: 'General', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'FileText', description: 'A blank canvas for any content.' },
+        { 
+            typeId: 'modular', 
+            name: 'Modular', 
+            defaultTemplateId: 'character_default', 
+            templates: [characterTemplate], 
+            aiInterviewTemplates: [], 
+            icon: 'Layout', 
+            description: 'Structured data for Characters, Items, and Entities.' 
+        },
+        { typeId: 'place', name: 'Place', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Map', description: 'A location, planet, or region.' },
+        { typeId: 'canvas', name: 'Canvas', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Box', description: 'A spatial board for visual organization.' },
     ];
-    return { schemaVersion: 1, updatedAt: Date.now(), noteTypes: types, lastUsed: { typeId: 'General' } };
+    return { schemaVersion: 1, updatedAt: Date.now(), noteTypes: types, lastUsed: { typeId: 'general' } };
 };
 
 const createDefaultHotkeys = (): HotkeysData => ({
@@ -165,16 +171,32 @@ const serializeNoteToJSON = (note: Note, folderPath: string): string => JSON.str
     schemaVersion: 2,
     noteId: note.id,
     meta: {
-        title: note.title, type: note.type, status: note.status, unresolved: note.unresolved,
-        universeTag: note.universeTag, createdAt: note.createdAt, updatedAt: note.updatedAt,
-        folderPath: folderPath, pinned: note.pinned, tags: []
+        title: note.title, 
+        type: note.type, // "general" | "modular" | "place" | "canvas"
+        recordKind: note.recordKind,
+        status: note.status, 
+        unresolved: note.unresolved,
+        universeTag: note.universeTag, 
+        createdAt: note.createdAt, 
+        updatedAt: note.updatedAt,
+        folderPath: folderPath, 
+        pinned: note.pinned, 
+        tags: []
     },
+    // M7 New Fields
+    modules: note.modules,
+    layout: note.layout,
+    templateId: note.templateId,
+    placeData: note.placeData,
+    eras: note.eras,
+    
+    // Legacy / Properties
     properties: {
         custom: note.metadata?.data || {},
         system: note.system || {},
         characterState: note.metadata?.characterState
     },
-    characterData: note.metadata?.characterData, // M6
+    characterData: note.metadata?.characterData, 
     content: {
         format: 'tiptap', version: 2,
         doc: note.content?.doc || note.content || { type: 'doc', content: [] }
@@ -188,26 +210,43 @@ const parseNoteFromJSON = (jsonString: string): Note | null => {
         if (!d.meta) return null;
         const content = d.content?.doc || { type: 'doc', content: [] };
         
-        // M6: Extract characterData
-        const characterData = d.characterData;
-
-        return {
-            id: d.noteId, title: d.meta.title, type: d.meta.type || "General", status: d.meta.status || "Draft",
-            unresolved: d.meta.unresolved || false, universeTag: d.meta.universeTag || null,
-            folderId: 'unknown', createdAt: d.meta.createdAt, updatedAt: d.meta.updatedAt,
-            content: content, pinned: d.meta.pinned || false,
+        // Construct basic note
+        const note: any = {
+            id: d.noteId, 
+            title: d.meta.title, 
+            type: d.meta.type || "general", 
+            recordKind: d.meta.recordKind,
+            status: d.meta.status || "Draft",
+            unresolved: d.meta.unresolved || false, 
+            universeTag: d.meta.universeTag || null,
+            folderId: 'unknown', 
+            createdAt: d.meta.createdAt, 
+            updatedAt: d.meta.updatedAt,
+            content: content, 
+            pinned: d.meta.pinned || false,
             excerpt: noteContentToPlainText({ content: { doc: content } }).substring(0, 150),
-            unresolvedSources: [], tag_ids: [],
+            unresolvedSources: [], 
+            tag_ids: [],
+            modules: d.modules,
+            layout: d.layout,
+            templateId: d.templateId,
+            placeData: d.placeData,
+            eras: d.eras,
             metadata: { 
-                kind: d.meta.type === 'Character' ? 'character' : 'general', 
+                kind: d.meta.type === 'Character' ? 'character' : (d.meta.recordKind || 'general'), 
                 data: d.properties?.custom, 
                 characterState: d.properties?.characterState,
-                characterData // M6
+                characterData: d.characterData 
             },
             system: d.properties?.system || {},
             content_plain: "",
             outbound_note_ids: [] 
         };
+
+        // Run Migration (M7)
+        // This converts legacy Character/Place types to modular/place
+        return migrateNoteToModular(note);
+
     } catch (e) { return null; }
 };
 
@@ -265,13 +304,11 @@ export class VaultService {
     public debouncedSaveNote = debounce(async (note: Note) => {
         if (!this._adapter || !this.workspaceCache) return;
         
-        // M6 Step 8: Check for transient prevent save flag
         if (note._preventSave) {
             console.warn(`[Vault] Save blocked for ${note.title} due to validation errors (Strict Mode).`);
             return;
         }
 
-        // Validation: Never save empty doc
         if (!note.content || (typeof note.content === 'object' && (!note.content.doc && !note.content.content))) {
             console.warn(`[Vault] Refusing to save invalid content for ${note.title}`);
             return;
@@ -280,19 +317,16 @@ export class VaultService {
         const folder = this.workspaceCache.folders[note.folderId];
         let folderPath = '';
         if (folder) {
-            folderPath = folder.type === 'system' ? folder.name : folder.name; // Simplified for root structure
+            folderPath = folder.type === 'system' ? folder.name : folder.name; 
         } else {
-            folderPath = SYSTEM_DIRS.INBOX; // Fallback
+            folderPath = SYSTEM_DIRS.INBOX; 
         }
 
-        // We don't change file name continuously on rename for stability, unless re-organized.
-        // For this version, we will use existing filename from index or generate new if missing.
         const fileIndex = this.workspaceCache.indexes.note_files || {};
         let fileName = fileIndex[note.id]?.fileName;
         
         if (!fileName) {
             fileName = generateFileName(note.title, note.id);
-            // Update index
             if (!this.workspaceCache.indexes.note_files) this.workspaceCache.indexes.note_files = {};
             this.workspaceCache.indexes.note_files[note.id] = { fileName, folderPath };
         }
@@ -335,7 +369,6 @@ export class VaultService {
         await this._adapter.init();
         templateService.setAdapter(this._adapter);
         
-        // Initialize basic structure for demo
         await this._adapter.mkdir(METADATA_DIR);
         await this._adapter.mkdir(SYSTEM_DIRS.INBOX);
     }
@@ -343,24 +376,20 @@ export class VaultService {
     async loadWorkspace(): Promise<Workspace> {
         if (!this._adapter) throw new Error("No adapter");
 
-        // 1. Ensure Metadata Exists
         await this._adapter.mkdir(METADATA_DIR, { recursive: true });
         await this._adapter.mkdir(GLOSSARY_TERMS_DIR, { recursive: true });
         await this._adapter.mkdir(GLOSSARY_PENDING_DIR, { recursive: true });
+        await this._adapter.mkdir(MIGRATION_DIR, { recursive: true });
         await templateService.ensureTemplatesStore();
 
-        // 2. Load Configs
         const settings = await this.safeReadJson<SettingsData>(join(METADATA_DIR, FILES.SETTINGS), createDefaultSettings());
         const hotkeys = await this.safeReadJson<HotkeysData>(join(METADATA_DIR, FILES.HOTKEYS), createDefaultHotkeys());
         const maps = await this.safeReadJson<MapsData>(join(METADATA_DIR, FILES.MAPS), createDefaultMaps());
         
-        // Load Note Type Templates (TemplatesData)
         const templatesData = await this.safeReadJson<TemplatesData>(join(METADATA_DIR, FILES.TEMPLATES), createDefaultTemplates());
         
-        // Load Character Templates (from templates folder)
         const characterTemplates = await templateService.loadTemplates();
         
-        // 3. Load Glossary (Index + Terms)
         const glossaryIndex = await this.safeReadJson<GlossaryIndex>(join(METADATA_DIR, FILES.GLOSSARY_INDEX), { schemaVersion: 1, updatedAt: Date.now(), lookup: {}, terms: {} });
         const glossaryOccurrences = await this.safeReadJson<GlossaryOccurrences>(join(METADATA_DIR, FILES.GLOSSARY_OCCURRENCES), { schemaVersion: 1, updatedAt: Date.now(), terms: {} });
         const glossaryIgnore = await this.safeReadJson<string[]>(join(METADATA_DIR, FILES.GLOSSARY_IGNORE), []);
@@ -368,7 +397,6 @@ export class VaultService {
         const terms: Record<string, GlossaryTerm> = {};
         const pending: Record<string, PendingTerm> = {};
 
-        // Load Terms from Disk
         const termFiles = await this._adapter.listDir(GLOSSARY_TERMS_DIR);
         for (const file of termFiles) {
             if (file.kind === 'file' && file.name.endsWith('.json')) {
@@ -379,7 +407,6 @@ export class VaultService {
             }
         }
 
-        // Load Pending from Disk
         const pendingFiles = await this._adapter.listDir(GLOSSARY_PENDING_DIR);
         for (const file of pendingFiles) {
             if (file.kind === 'file' && file.name.endsWith('.json')) {
@@ -390,7 +417,6 @@ export class VaultService {
             }
         }
 
-        // 4. Scan Notes (Simple Scan)
         const notes: Record<string, Note> = {};
         const titleToIndex: Record<string, string> = {};
         const noteFilesIndex: Record<string, { fileName: string, folderPath: string }> = {};
@@ -406,6 +432,9 @@ export class VaultService {
             const entries = await this._adapter.listDir(path);
             for (const entry of entries) {
                 if (entry.kind === 'file' && entry.name.endsWith('.json')) {
+                    // Ignore backups and artifacts
+                    if (entry.name.includes('.bak') || entry.name.startsWith('_backup_')) continue;
+
                     try {
                         const content = await this._adapter.readFile(entry.path);
                         const note = parseNoteFromJSON(content as string);
@@ -415,7 +444,6 @@ export class VaultService {
                             titleToIndex[note.title] = note.id;
                             noteFilesIndex[note.id] = { fileName: entry.name, folderPath: path };
                             
-                            // Build backlinks
                             const outbound = extractOutboundLinks(note.content);
                             note.outbound_note_ids = outbound;
                             outbound.forEach(targetId => {
@@ -425,7 +453,6 @@ export class VaultService {
                         }
                     } catch (e) { console.warn("Failed to load note", entry.path); }
                 } else if (entry.kind === 'dir' && !entry.name.startsWith('.')) {
-                    // Create User Folder
                     const newFolderId = generateId();
                     folders[newFolderId] = { 
                         id: newFolderId, 
@@ -441,11 +468,9 @@ export class VaultService {
             }
         };
 
-        // Scan Roots
         await this._adapter.mkdir(SYSTEM_DIRS.INBOX, { recursive: true });
         await scanDir(SYSTEM_DIRS.INBOX, 'inbox');
         
-        // Scan other root folders if any (for now assuming flat root structure or everything in Inbox/User folders)
         const rootEntries = await this._adapter.listDir('');
         for (const entry of rootEntries) {
             if (entry.kind === 'dir' && !entry.name.startsWith('.') && entry.name !== SYSTEM_DIRS.INBOX && entry.name !== SYSTEM_DIRS.ARCHIVED && entry.name !== ATTACHMENTS_DIR) {
@@ -455,7 +480,6 @@ export class VaultService {
             }
         }
 
-        // Reconstruct Workspace
         const ws: Workspace = {
             schema_version: "1.0",
             workspace_id: "local",
@@ -502,9 +526,6 @@ export class VaultService {
 
     async ensureNoteContent(noteId: string): Promise<any> {
         if (!this.workspaceCache || !this.workspaceCache.notes[noteId]) return null;
-        // In this architecture, content is loaded at startup. 
-        // If we switched to lazy loading, this would fetch from disk.
-        // For now, return what we have.
         return this.workspaceCache.notes[noteId].content;
     }
 
@@ -516,8 +537,6 @@ export class VaultService {
 
     onWorkspaceChange(ws: Workspace) {
         this.workspaceCache = ws;
-        // Trigger specific saves based on what changed? 
-        // Usually components call specific save methods. This might be a catch-all.
     }
 
     async createDirectory(name: string) {
@@ -525,8 +544,6 @@ export class VaultService {
     }
 
     async renameFolderOnDisk(folderId: string, newName: string) {
-        // Find folder in cache, get path, rename
-        // Simplified: assuming root folders for now
         const folder = this.workspaceCache?.folders[folderId];
         if (folder && this._adapter) {
             await this._adapter.renameDir(folder.name, newName);
@@ -535,8 +552,6 @@ export class VaultService {
     }
 
     async saveMetadataNow(workspace: Workspace) {
-        // Force save critical metadata
-        // Folders are not currently saved in a separate file in this version, derived from disk scan.
     }
 
     async saveGlossaryTerm(term: GlossaryTerm) {
@@ -567,8 +582,6 @@ export class VaultService {
         await this._adapter.delete(join(GLOSSARY_PENDING_DIR, filename));
     }
 
-    // --- Attachments ---
-
     async saveAttachment(noteId: string, file: File): Promise<string> {
         if (!this._adapter) throw new Error("No vault");
         await this._adapter.mkdir(ATTACHMENTS_DIR, { recursive: true });
@@ -589,14 +602,11 @@ export class VaultService {
         } catch { return null; }
     }
 
-    // --- Maintenance ---
-
     async rebuildIndex() {
         await this.loadWorkspace(); 
     }
 
     async runVaultDoctor(): Promise<{ fixed: number, message: string }> {
-        // Placeholder for advanced repairs
         return { fixed: 0, message: "Vault check complete. No issues found." };
     }
 

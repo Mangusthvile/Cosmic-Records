@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Note, NoteStatus, Workspace, Folder, NoteTypeDefinition, CharacterState } from '../types';
+import { Note, NoteStatus, Workspace, Folder, NoteTypeDefinition, CharacterState, NoteType, CharacterForm, CharacterSnapshot } from '../types';
 import { RefreshCw, ChevronDown, ChevronRight, Loader, Eye, Box, Search, ArrowUp, ArrowDown, X, Folder as FolderIcon, AlertTriangle, Layers, Plus, Camera, Archive } from 'lucide-react';
 import { getUniqueTitle, moveNote, resolveNote } from '../services/storageService';
 import HybridEditor, { HybridEditorHandle } from './editor/HybridEditor';
@@ -106,7 +106,13 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note: initialMeta, workspace, o
   };
 
   const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => { const newMeta = { ...localMeta, status: e.target.value as NoteStatus }; setLocalMeta(newMeta); performSave(newMeta, localContent); };
-  const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => { const newMeta = { ...localMeta, type: e.target.value }; setLocalMeta(newMeta); performSave(newMeta, localContent); };
+  
+  const handleTypeChange = (e: React.ChangeEvent<HTMLSelectElement>) => { 
+      const newMeta = { ...localMeta, type: e.target.value as NoteType }; 
+      setLocalMeta(newMeta); 
+      performSave(newMeta, localContent); 
+  };
+  
   const handleUniverseChange = (e: React.ChangeEvent<HTMLSelectElement>) => { const val = e.target.value; const newMeta = { ...localMeta, universeTag: val === 'none' ? null : val }; setLocalMeta(newMeta); performSave(newMeta, localContent); };
   const handleFolderChange = (e: React.ChangeEvent<HTMLSelectElement>) => { const newFolderId = e.target.value; if (newFolderId !== localMeta.folderId) { moveNote(workspace, localMeta.id, newFolderId); onUpdate({ ...localMeta, folderId: newFolderId }); } };
   
@@ -124,7 +130,14 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note: initialMeta, workspace, o
       const name = prompt("Name for new form (e.g. 'Ascended'):");
       if (!name) return;
       if (!characterState) return;
-      const newForm = { formId: crypto.randomUUID(), name, description: '', overrides: {} };
+      const newForm: CharacterForm = { 
+          formId: crypto.randomUUID(), 
+          name, 
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          overrides: {}, 
+          localBlocks: [] 
+      };
       const newState = { ...characterState, forms: [...characterState.forms, newForm], activeFormId: newForm.formId };
       const newMeta = { ...localMeta, metadata: { ...localMeta.metadata, characterState: newState } };
       setLocalMeta(newMeta);
@@ -159,15 +172,17 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note: initialMeta, workspace, o
       const label = prompt("Snapshot Label (e.g. 'End of Arc 1'):");
       if (!label) return;
       
-      const currentForm = activeFormId === 'base' ? null : characterState.forms.find(f => f.formId === activeFormId);
-      const snapshot = {
+      // Legacy snapshot creation in NoteEditor is limited. 
+      const snapshot: CharacterSnapshot = {
           snapshotId: crypto.randomUUID(),
           label,
-          dateText: new Date().toLocaleDateString(),
+          date: new Date().toLocaleDateString(),
           createdAt: Date.now(),
-          notes: '',
-          capturedModuleData: currentForm ? currentForm.overrides : {},
-          formId: activeFormId
+          formId: activeFormId,
+          resolved: {
+              templateId: localMeta.templateId || 'default',
+              blocks: [] 
+          }
       };
       
       const newState = { ...characterState, snapshots: [...characterState.snapshots, snapshot] };
@@ -274,6 +289,7 @@ const NoteEditor: React.FC<NoteEditorProps> = ({ note: initialMeta, workspace, o
                   <div className="flex flex-col gap-1">
                       <label className="text-[10px] uppercase text-text2 font-bold">Type</label>
                       <Select value={localMeta.type} onChange={handleTypeChange}>
+                          {/* Force lowercase matching with new type system */}
                           {workspace.templates.noteTypes.map(t => <option key={t.typeId} value={t.typeId}>{t.name}</option>)}
                       </Select>
                   </div>

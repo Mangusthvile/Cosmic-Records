@@ -4,9 +4,9 @@ import { Workspace, NoteTypeDefinition, NoteStatus, Folder, CharacterTemplate, I
 import { FileText, User, Map, Box, Calendar, Scroll, Sparkles, PenTool, X, ChevronRight, Layout, ArrowRight, ArrowLeft, Upload } from 'lucide-react';
 import { vaultService } from '../services/vaultService';
 import { Panel, Button, IconButton, Input, Select } from './ui/Primitives';
-import { characterCreationService } from '../services/characterCreationService';
+import { characterCreationService } from '../services/modularCreationService';
 import { createNote, logNotification } from '../services/storageService';
-import { importCharacterBundle } from '../services/characterExportService';
+import { importCharacterBundle } from '../services/modularExportService';
 
 interface NoteCreationModalProps { isOpen: boolean; onClose: () => void; onCreate: (options: any) => void; workspace: Workspace; }
 const getIcon = (iconName: string | undefined) => {
@@ -17,7 +17,7 @@ type WizardStep = 'TYPE_SELECT' | 'TEMPLATE_SELECT' | 'METHOD_SELECT' | 'INTERVI
 
 const NoteCreationModal: React.FC<NoteCreationModalProps> = ({ isOpen, onClose, onCreate, workspace }) => {
     const [step, setStep] = useState<WizardStep>('TYPE_SELECT');
-    const [typeId, setTypeId] = useState<string>('General');
+    const [typeId, setTypeId] = useState<string>('general');
     const [title, setTitle] = useState('');
     const [status, setStatus] = useState<NoteStatus>('Draft');
     const [folderId, setFolderId] = useState<string>('inbox');
@@ -44,7 +44,8 @@ const NoteCreationModal: React.FC<NoteCreationModalProps> = ({ isOpen, onClose, 
 
     const handleNext = () => {
         if (step === 'TYPE_SELECT') {
-            if (typeId === 'Character') {
+            // M7: Modular type (id 'modular') triggers template selection
+            if (typeId === 'modular') {
                 setStep('TEMPLATE_SELECT');
             } else {
                 setStep('CONFIGURE');
@@ -75,7 +76,8 @@ const NoteCreationModal: React.FC<NoteCreationModalProps> = ({ isOpen, onClose, 
         const newTemplates = { ...workspace.templates, lastUsed: { typeId }, updatedAt: Date.now() };
         workspace.templates = newTemplates; vaultService.debouncedSaveTemplates(newTemplates);
 
-        if (typeId === 'Character') {
+        if (typeId === 'modular') {
+            // Use creation service which handles template application
             const note = characterCreationService.createCharacterNote(workspace, {
                 title: title.trim() || undefined,
                 folderId,

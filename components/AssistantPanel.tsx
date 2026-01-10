@@ -65,7 +65,7 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({ currentNote, workspace,
   };
 
   const handleConvertToRules = async () => {
-      if (!currentNote || currentNote.type !== 'character') return;
+      if (!currentNote || currentNote.recordKind !== 'character') return;
       setMessages(prev => [...prev, { role: 'user', text: 'Convert narrative to game rules.' }]);
       setIsLoading(true);
       try {
@@ -136,7 +136,7 @@ const AssistantPanel: React.FC<AssistantPanelProps> = ({ currentNote, workspace,
                   <AlertTriangle size={12} /> Canon
               </button>
               
-              {currentNote.type === 'character' && (
+              {currentNote.recordKind === 'character' && (
                   <button 
                     onClick={handleConvertToRules}
                     disabled={isLoading}

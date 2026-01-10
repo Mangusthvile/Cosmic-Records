@@ -1,14 +1,15 @@
+
 import { 
   Workspace, Note, NoteType, NoteStatus, 
   ID, UserPreferences, GlossaryTerm, PendingTerm, Folder,
   NotificationLogItem,
-  MapData, CharacterData, CharacterForm
+  MapData, CharacterData, CharacterForm, RecordKind, ModuleInstance
 } from "../types";
 import { parseWikiLinks, extractLinkTitles, extractOutboundLinks } from "./linkService";
 import { vaultService, noteContentToPlainText } from "./vaultService";
 import { extractCandidateTerms, scanTextForGlossaryTerms } from "./termDetection";
-import { createCharacterBlock } from "./characterModuleRegistry";
-import { resolveBlocks } from "./characterResolution"; // Import helper to resolve blocks
+import { createCharacterBlock } from "./modularModuleRegistry";
+import { resolveBlocks } from "./modularResolution"; 
 
 export const normalizeKey = (str: string): string => {
     return str.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[^\w\s-]/g, ''); 
@@ -55,7 +56,23 @@ export const ensureUnresolvedNote = (workspace: Workspace, title: string, source
     const id = generateId();
     const now = Date.now();
     const initialContent = { type: 'doc', content: [{ type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: title }] }, { type: 'paragraph', content: [{ type: 'text', text: `Unresolved link created from [[${workspace.notes[sourceNoteId]?.title || 'Unknown source'}]].` }] }] };
-    const note: Note = { id, title, type: "General", status: "Draft", unresolved: true, unresolvedSources: [sourceNoteId], universeTag: null, folderId: 'unresolved', createdAt: now, updatedAt: now, content: initialContent, pinned: false, tag_ids: [], metadata: { kind: 'general', data: {} } };
+    
+    const note: Note = { 
+        id, 
+        title, 
+        type: "general", 
+        status: "Draft", 
+        unresolved: true, 
+        unresolvedSources: [sourceNoteId], 
+        universeTag: null, 
+        folderId: 'unresolved', 
+        createdAt: now, 
+        updatedAt: now, 
+        content: initialContent, 
+        pinned: false, 
+        tag_ids: [], 
+        metadata: { kind: 'general', data: {} } 
+    };
     workspace.notes[id] = note;
     workspace.indexes.title_to_note_id[title] = id;
     workspace.indexes.unresolved_note_ids.push(id);
@@ -92,44 +109,48 @@ const updateLinkGraph = (workspace: Workspace, note: Note) => {
 };
 
 // Milestone 6 Step 7: Extract refs from character blocks
+// Updated for M7 to work with ModuleInstance if possible, or gracefully handle both
 const extractCharacterRefs = (note: Note): { places: string[], characters: string[] } => {
-    if (note.type !== 'Character' || !note.metadata?.characterData) return { places: [], characters: [] };
+    // M7 Check
+    const blocks = note.modules || (note.metadata?.characterData?.blocks);
+    if (!blocks) return { places: [], characters: [] };
     
-    const charData = note.metadata.characterData;
     const places = new Set<string>();
     const characters = new Set<string>();
 
-    // Helper to scan a payload
     const scanPayload = (type: string, payload: any) => {
-        if (type === 'locations') {
+        // Handle M6 Block Types
+        if (type === 'locations' || (type === 'custom' && payload?.originPlaceId)) {
             if (payload.originPlaceId) places.add(payload.originPlaceId);
             if (payload.currentPlaceId) places.add(payload.currentPlaceId);
             if (payload.otherPlaces && Array.isArray(payload.otherPlaces)) {
                 payload.otherPlaces.forEach((p: any) => { if (p.placeId) places.add(p.placeId); });
             }
         }
-        if (type === 'relationships') {
+        if (type === 'relationships' || (type === 'links')) {
             if (payload.relationships && Array.isArray(payload.relationships)) {
                 payload.relationships.forEach((r: any) => { if (r.targetCharacterId) characters.add(r.targetCharacterId); });
+            }
+            if (payload.links && Array.isArray(payload.links)) {
+                payload.links.forEach((r: any) => { if (r.targetNoteId) characters.add(r.targetNoteId); });
             }
         }
     };
 
-    // Scan Base Blocks
-    charData.blocks.forEach(b => scanPayload(b.type, b.payload));
+    blocks.forEach((b: any) => scanPayload(b.type, b.payload));
 
-    // Scan Overrides in all Forms
-    Object.values(charData.forms.items).forEach(form => {
-        Object.entries(form.overrides).forEach(([blockId, override]) => {
-            if (override.payload) {
-                // Find block type from base blocks (assuming stable blockIds)
-                const baseBlock = charData.blocks.find(b => b.blockId === blockId);
-                if (baseBlock) scanPayload(baseBlock.type, override.payload);
-            }
+    // Handle Forms overrides if CharacterData exists (Legacy)
+    if (note.metadata?.characterData?.forms?.items) {
+        Object.values(note.metadata.characterData.forms.items).forEach((form: any) => {
+            Object.entries(form.overrides).forEach(([blockId, override]: [string, any]) => {
+                if (override.payload) {
+                    const baseBlock = blocks.find((b: any) => b.blockId === blockId || b.moduleId === blockId);
+                    if (baseBlock) scanPayload(baseBlock.type, override.payload);
+                }
+            });
+            form.localBlocks?.forEach((b: any) => scanPayload(b.type, b.payload));
         });
-        // Scan Local Blocks
-        form.localBlocks.forEach(b => scanPayload(b.type, b.payload));
-    });
+    }
 
     return {
         places: Array.from(places),
@@ -144,53 +165,41 @@ export const createNote = (workspace: Workspace, options: any = {}): Note => {
     const now = Date.now();
     let initialContent: any = { type: 'doc', content: [] };
     
-    // Character Data Initialization (Milestone 6)
-    let characterData: CharacterData | undefined = undefined;
-    if (options.type === 'Character') {
-        characterData = {
-            templateId: 'character_default',
-            blocks: [
-                createCharacterBlock('identity'),
-                createCharacterBlock('summary'),
-                createCharacterBlock('appearance'),
-                createCharacterBlock('personality'),
-                createCharacterBlock('stats'),
-                createCharacterBlock('abilities'),
-                createCharacterBlock('items'),
-                createCharacterBlock('relationships'),
-                createCharacterBlock('history'),
-                createCharacterBlock('locations'),
-                createCharacterBlock('tags'),
-                createCharacterBlock('authorNotes')
-            ],
-            forms: {
-                schemaVersion: 1,
-                activeFormId: 'base',
-                order: ['base'],
-                items: {
-                    'base': {
-                        formId: 'base',
-                        name: 'Base',
-                        createdAt: now,
-                        updatedAt: now,
-                        overrides: {},
-                        localBlocks: []
-                    }
-                }
-            },
-            snapshots: {
-                schemaVersion: 1,
-                activeSnapshotId: null,
-                order: [],
-                items: {}
-            }
-        };
+    // M7 Note Type Mapping
+    let noteType: NoteType = 'general';
+    let recordKind: RecordKind | undefined = undefined;
+    let modules: ModuleInstance[] | undefined = undefined;
+    let placeData = undefined;
+    let eras = undefined;
+
+    const requestedType = (options.type || 'general').toLowerCase();
+
+    // Handle specific types requested from UI
+    if (requestedType === 'modular' || requestedType === 'character' || requestedType === 'item') {
+        noteType = 'modular';
+        // Default to character if not specified, usually options.recordKind handles it
+        // If type was specifically 'Character' (Legacy), force recordKind.
+        if (requestedType === 'character') {
+            recordKind = 'character';
+        } else {
+            recordKind = options.recordKind || 'character'; // Default fallback
+        }
+    } else if (requestedType === 'place') {
+        noteType = 'place';
+        recordKind = 'place';
+        placeData = { parentPlaceId: null };
+        eras = { order: [], byId: {} };
+    } else if (requestedType === 'canvas') {
+        noteType = 'canvas';
+    } else {
+        noteType = 'general';
     }
 
     const note: Note = { 
         id, 
         title, 
-        type: options.type || "General", 
+        type: noteType, 
+        recordKind,
         status: options.status || "Draft", 
         unresolved: false, 
         unresolvedSources: [], 
@@ -201,11 +210,13 @@ export const createNote = (workspace: Workspace, options: any = {}): Note => {
         content: initialContent, 
         pinned: false, 
         tag_ids: [], 
+        modules: options.modules || modules,
+        placeData,
+        eras,
         metadata: { 
-            kind: options.type === 'Character' ? 'character' : 'general', 
+            kind: recordKind || 'general', 
             data: {}, 
-            characterData: characterData,
-            characterState: options.type === 'Character' ? { activeFormId: 'base', forms: [], snapshots: [] } : undefined 
+            // Legacy init if needed
         }, 
         outbound_note_ids: [] 
     };
@@ -216,7 +227,7 @@ export const createNote = (workspace: Workspace, options: any = {}): Note => {
     workspace.indexes.title_to_note_id[note.title] = id;
     workspace.indexes.backlinks[id] = [];
     
-    logNotification(workspace, 'system', `Created ${note.type} note: ${title}`, id);
+    logNotification(workspace, 'system', `Created ${noteType} note: ${title}`, id);
     return note;
 };
 
@@ -264,32 +275,8 @@ export const updateNote = (workspace: Workspace, note: Note): Workspace => {
     note.content_plain = noteContentToPlainText(note);
     updateLinkGraph(workspace, note);
     
-    // M6 Step 7: Update references index
-    if (note.type === 'Character') {
-        // Need to update the index entry for this note with refs
-        // Since we don't have a direct handle to index entry in `workspace.indexes.notes` (it's not fully defined there in current codebase usually, let's assume we update `note` object and index implicitly via serialization or explicit index object if defined).
-        // The prompt says: Store in metadata index entry.
-        // `IndexEntry` is defined in `types.ts` and loaded in `vaultService`.
-        // `workspace` doesn't expose the full `IndexData` object directly on root, only inside `loadWorkspace`.
-        // However, `workspace.notes` are the source of truth for runtime.
-        // We will assume `vaultService.saveNote` handles persisting the note JSON.
-        // BUT `IndexData` is separate (`index.json`). We usually rebuild it or update it.
-        // `vaultService` reconstructs it on load.
-        // To persist refs to `index.json`, we'd need to update the `IndexEntry`.
-        // Workspace structure doesn't seem to hold `index.json` structure directly in memory under a key.
-        // It holds `workspace.indexes`. Let's assume we can't easily write to `index.json` without full rebuild or exposing it.
-        // For this milestone, we will just calculate it. 
-        // Wait, `IndexData` IS loaded in `vaultService` but not attached to `Workspace` interface fully?
-        // `vaultService.loadWorkspace` does not attach `index.json` content to `Workspace`.
-        // It attaches `indexes` which are runtime lookups.
-        // I will add `refs` to `Note` object optionally or just ignore persistence to `index.json` for now if infrastructure isn't there, 
-        // BUT the prompt says "Store this in the metadata index entry".
-        // Use `vaultService`? `vaultService` manages `index.json`.
-        // Let's just extract it here and log it for now, or skip if I can't persist to index easily.
-        // Actually, let's inspect `vaultService`. It scans files.
-        // The `IndexData` is constructed in `vaultService.loadWorkspace` but not saved back incrementally usually.
-        // I'll skip persisting to `index.json` for now as it requires significant `vaultService` refactoring to expose index maintenance.
-        // I will extract it to `note.metadata.refs` (in-file) so it's durable, and can be indexed later.
+    // M7 Ref extraction
+    if (note.recordKind === 'character') {
         const refs = extractCharacterRefs(note);
         if (!note.metadata) note.metadata = { kind: 'character', data: {} };
         note.metadata.refs = refs;
@@ -322,10 +309,9 @@ export const permanentDeleteNote = async (workspace: Workspace, noteId: string):
     Object.keys(workspace.indexes.backlinks).forEach(tid => { workspace.indexes.backlinks[tid] = workspace.indexes.backlinks[tid].filter(id => id !== noteId); });
     delete workspace.indexes.backlinks[noteId];
     
-    // Also remove from note files index if present
     const fileInfo = workspace.indexes.note_files?.[noteId];
     if (fileInfo) {
-       // TODO: Delete file via adapter once exposed or rely on doctor
+       // TODO: Delete file
     }
     
     logNotification(workspace, 'warning', `Deleted note: ${note.title}`);
@@ -341,7 +327,7 @@ export const createFolder = (workspace: Workspace, name: string, parentId: strin
     while(siblings.some(f => f.name === finalName)) { finalName = `${name} ${counter}`; counter++; }
     const now = Date.now();
     workspace.folders[id] = { id, name: finalName, type: 'user', parentId, createdAt: now, updatedAt: now, order: siblings.length };
-    vaultService.createDirectory(finalName); // Simplified pathing for root folders
+    vaultService.createDirectory(finalName); 
     vaultService.saveMetadataNow(workspace);
     return id;
 };

@@ -4,10 +4,10 @@ import {
     CharacterBundle, CharacterFullBundle, CharacterForm,
     NoteStatus
 } from '../types';
-import { resolveBlocks, ensureFormsStructure } from './characterResolution';
+import { resolveBlocks, ensureFormsStructure } from './modularResolution';
 import { noteContentToPlainText, vaultService } from './vaultService';
 import { getUniqueTitle, createNote } from './storageService';
-import { createCharacterBlock } from './characterModuleRegistry';
+import { createCharacterBlock } from './modularModuleRegistry';
 
 // --- Export Logic ---
 
@@ -301,7 +301,8 @@ export const importCharacterBundle = async (
     const note: Note = {
         id: newNoteId,
         title: title,
-        type: 'Character',
+        type: 'modular',
+        recordKind: 'character',
         status: 'Draft',
         unresolved: false,
         unresolvedSources: [],

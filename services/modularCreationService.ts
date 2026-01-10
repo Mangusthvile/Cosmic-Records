@@ -1,5 +1,6 @@
+
 import { CharacterBlock, CharacterBlockType, CharacterData, CharacterTemplate, Workspace, InterviewMappingRule } from '../types';
-import { createCharacterBlock } from './characterModuleRegistry';
+import { createCharacterBlock } from './modularModuleRegistry';
 import { templateService, DEFAULT_CHARACTER_TEMPLATE } from './templateService';
 import { createNote } from './storageService';
 

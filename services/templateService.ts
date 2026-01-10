@@ -1,7 +1,7 @@
 import { VaultAdapter } from './adapters';
 import { CharacterTemplate, TemplatesIndex, CharacterBlockType, CharacterData } from '../types';
 import { join } from './path';
-import { createCharacterBlock } from './characterModuleRegistry';
+import { createCharacterBlock } from './modularModuleRegistry';
 
 const TEMPLATES_DIR = '.cosmicrecords/templates';
 const INDEX_FILE = 'index.json';
@@ -11,6 +11,7 @@ export const DEFAULT_CHARACTER_TEMPLATE: CharacterTemplate = {
     schemaVersion: 1,
     templateId: 'character_default',
     kind: 'character',
+    recordKind: 'character',
     name: 'Default Character',
     description: 'Standard character sheet with identity, stats, and biography.',
     strictMode: false,
@@ -62,22 +63,7 @@ export const DEFAULT_CHARACTER_TEMPLATE: CharacterTemplate = {
             { type: "richTextFrom", moduleType: "appearance", richTextField: "doc", fromAnswerId: "appearance" },
             { type: "richTextFrom", moduleType: "personality", richTextField: "doc", fromAnswerId: "personality" },
             { type: "appendList", moduleType: "abilities", listField: "abilities", fromAnswerId: "abilities" },
-            { type: "richTextFrom", moduleType: "relationships", richTextField: "doc", fromAnswerId: "relationships" }, // Correct module type for text-based rels in M6 defaults? Actually M6 defaults use 'refs' for relationships. But let's assume we want to map text to it? Or maybe the default template should use a text block for relationship details if we map text. 
-            // Wait, M6 relationships is "refs". Mapping text to it is tricky unless we convert to note links. 
-            // The prompt says "richTextFrom relationships.text <- relationships". 
-            // If the module type is 'relationships' (which is 'refs'), it expects { links: [] }.
-            // If the module is rich text, it works.
-            // Let's check `characterModuleRegistry`. 'relationships' is 'refs'. 
-            // The prompt example might assume we use a text block or we adapt mapping.
-            // "If your module payload schemas differ, adapt mapping".
-            // Since `relationships` module is structured refs, mapping raw text to it is hard.
-            // I will map "relationships" answer to "authorNotes" or a specific text block if I can't map to structured.
-            // OR I can parse the text.
-            // For simplicity and stability, I'll map 'relationships' answer to 'authorNotes' appended, OR I'll add a 'relationships_text' block?
-            // Actually, the prompt example says `richTextFrom relationships.text`. 
-            // If I change 'relationships' module to be richText in the template, it would work. But it is 'refs' by default.
-            // I will map it to `history` for now as extra text, OR just `authorNotes`.
-            // Let's map to `authorNotes` to be safe.
+            { type: "richTextFrom", moduleType: "relationships", richTextField: "doc", fromAnswerId: "relationships" }, 
             { type: "richTextFrom", moduleType: "history", richTextField: "doc", fromAnswerId: "history" }
         ]
     }

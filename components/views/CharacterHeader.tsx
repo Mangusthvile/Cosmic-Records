@@ -3,8 +3,8 @@ import React, { useState } from 'react';
 import { Note, CharacterData, NoteStatus, CharacterSnapshot, CharacterForm, Workspace } from '../../types';
 import { Input, Select, Button, IconButton } from '../ui/Primitives';
 import { Layers, Camera, Globe, Clock, Plus, MoreHorizontal, Check, X, Copy, Trash2, Edit2, RotateCcw, Download, FileJson } from 'lucide-react';
-import ContextMenu from '../ContextMenu';
-import { createCharacterBundle, createCharacterFullBundle, downloadJSON } from '../../services/characterExportService';
+import ContextMenu, { ContextMenuItem } from '../ContextMenu';
+import { createCharacterBundle, createCharacterFullBundle, downloadJSON } from '../../services/modularExportService';
 
 interface CharacterHeaderProps {
     note: Note;
@@ -147,14 +147,14 @@ const CharacterHeader: React.FC<CharacterHeaderProps> = ({
         }
     };
 
-    const formMenu = [
+    const formMenu: ContextMenuItem[] = [
         { label: 'Duplicate Form', icon: Copy, onClick: handleDuplicateForm },
         { label: 'Rename', icon: Edit2, onClick: startRename },
         { separator: true },
         { label: 'Delete Form', icon: Trash2, danger: true, disabled: activeFormId === 'base', onClick: handleDeleteForm }
     ];
 
-    const mainMenu = [
+    const mainMenu: ContextMenuItem[] = [
         { label: 'Export JSON (Current Form)', icon: Download, onClick: handleExportBundle },
         { label: 'Export Full Backup (All Forms)', icon: FileJson, onClick: handleExportFull }
     ];

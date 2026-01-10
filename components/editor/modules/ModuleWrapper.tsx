@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { NodeViewWrapper } from '@tiptap/react';
 import { ChevronDown, ChevronRight, GripVertical, Trash2, X } from 'lucide-react';
@@ -90,7 +89,7 @@ const ModuleWrapper: React.FC<ModuleWrapperProps> = ({ node, updateAttributes, d
                         data={resolvedData || {}} 
                         onChange={handleDataChange} 
                         readOnly={false} 
-                        isOverride={!isBase && hasOverride}
+                        isOverride={!isBase && !!hasOverride}
                     />
                 </div>
             )}

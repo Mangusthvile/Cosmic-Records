@@ -1,6 +1,6 @@
 
 import React, { useState } from 'react';
-import { ValidationResult, ValidationIssue } from '../../services/characterValidation';
+import { ValidationResult, ValidationIssue } from '../../services/modularValidation';
 import { AlertTriangle, AlertCircle, ChevronDown, ChevronRight, ArrowRight, Settings } from 'lucide-react';
 import { Button } from '../ui/Primitives';
 

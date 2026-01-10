@@ -54,7 +54,7 @@ const StarMap: React.FC<StarMapProps> = ({ workspace, onSelectNote }) => {
         name: 'The Cosmos',
         type: 'root',
         children: universeTags.map(tag => {
-            const notesInUniverse = notes.filter(n => n.universeTag === tag && n.type === 'Place');
+            const notesInUniverse = notes.filter(n => n.universeTag === tag && n.recordKind === 'place');
             
             return {
                 id: tag,

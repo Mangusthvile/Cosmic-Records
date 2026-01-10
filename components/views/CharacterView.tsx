@@ -1,15 +1,15 @@
 
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { Note, Workspace, CharacterTab, CharacterBlock, CharacterBlockType, CharacterData, CharacterSnapshot } from '../../types';
-import { getCharacterModuleSpec, createCharacterBlock } from '../../services/characterModuleRegistry';
+import { getCharacterModuleSpec, createCharacterBlock } from '../../services/modularModuleRegistry';
 import { IconButton, Button } from '../ui/Primitives';
 import { GripVertical, ChevronDown, ChevronRight, Trash2, Plus, X } from 'lucide-react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { getUniqueTitle, logNotification } from '../../services/storageService';
-import { resolveBlocks, ensureFormsStructure } from '../../services/characterResolution';
-import { validateCharacter, ValidationResult } from '../../services/characterValidation';
+import { resolveBlocks, ensureFormsStructure } from '../../services/modularResolution';
+import { validateCharacter, ValidationResult } from '../../services/modularValidation';
 import CharacterHeader from './CharacterHeader';
 import ValidationPanel from './ValidationPanel';
 

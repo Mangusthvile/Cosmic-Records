@@ -1,4 +1,5 @@
-import { NoteStatus, NoteType } from "./types";
+
+import { NoteStatus, RecordKind, NoteType } from "./types";
 
 export const DEFAULT_SETTINGS = {
   showOutdatedInMap: false,
@@ -15,12 +16,15 @@ export const STATUS_COLORS: Record<NoteStatus, string> = {
   "Archived": "text-zinc-600 border-zinc-600"
 };
 
-export const TYPE_ICONS: Record<NoteType, string> = {
-  "General": "📄",
-  "Character": "👤",
-  "Place": "🪐",
-  "Item": "📦",
-  "Event": "📅",
-  "Lore": "📜",
-  "Canvas": "🎨"
+// M7: Icons map to RecordKind OR NoteType (if general/canvas)
+export const TYPE_ICONS: Record<string, string> = {
+  "general": "📄",
+  "modular": "💠",
+  "canvas": "🎨",
+  "character": "👤",
+  "place": "🪐",
+  "item": "📦",
+  "event": "📅",
+  "lore": "📜",
+  "custom": "🧩"
 };

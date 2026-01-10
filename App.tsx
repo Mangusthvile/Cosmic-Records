@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Note, Workspace, PaneState, PaneId, UIState, MissingTab, NoteTab, SidebarState, NavigationState, WidgetSystemState, SearchFilters } from './types';
 import { createNote, updateNote, logNotification, createMap, createGlossaryTerm, scanNoteForPending } from './services/storageService'; 
@@ -248,7 +249,7 @@ const App: React.FC = () => {
           newNote = createNote(workspace, options);
           
           // Legacy M6 Init (Should be handled by new flow for Character, but keep fallback)
-          if (newNote.type === 'Character' && !newNote.metadata?.characterData) {
+          if (newNote.recordKind === 'character' && !newNote.metadata?.characterData) {
               const now = Date.now();
               newNote.metadata = { 
                   ...newNote.metadata, 
@@ -285,7 +286,7 @@ const App: React.FC = () => {
       vaultService.onNoteChange(newNote);
       
       // Open with correct view
-      if (newNote.type === 'Character') {
+      if (newNote.recordKind === 'character') {
            paneSystem.openTabInPane(paneSystem.state.focusedPaneId, {
               id: crypto.randomUUID(),
               kind: 'character',

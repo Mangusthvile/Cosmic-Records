@@ -1,4 +1,4 @@
-import { CharacterBlock, CharacterBlockType, KeyValueBlockPayload, StatGridBlockPayload, TextBlockPayload, MeterBlockPayload } from '../types';
+import { CharacterBlock, CharacterBlockType } from '../types';
 
 export const CHARACTER_BLOCK_TYPES: CharacterBlockType[] = ['text', 'keyValue', 'statGrid', 'meter'];
 
@@ -23,7 +23,7 @@ export const BLOCK_REGISTRY: Partial<Record<CharacterBlockType, BlockDefinition>
         displayName: 'Text Area',
         iconKey: 'FileText',
         defaultTitle: 'Notes',
-        createPayload: (): TextBlockPayload => ({
+        createPayload: () => ({
             doc: { type: 'doc', content: [] }
         })
     },
@@ -32,7 +32,7 @@ export const BLOCK_REGISTRY: Partial<Record<CharacterBlockType, BlockDefinition>
         displayName: 'Key-Value List',
         iconKey: 'List',
         defaultTitle: 'Details',
-        createPayload: (): KeyValueBlockPayload => ({
+        createPayload: () => ({
             fields: []
         })
     },
@@ -41,7 +41,7 @@ export const BLOCK_REGISTRY: Partial<Record<CharacterBlockType, BlockDefinition>
         displayName: 'Stat Grid',
         iconKey: 'Grid',
         defaultTitle: 'Stats',
-        createPayload: (): StatGridBlockPayload => ({
+        createPayload: () => ({
             columns: ['Value'],
             rows: []
         })
@@ -51,7 +51,7 @@ export const BLOCK_REGISTRY: Partial<Record<CharacterBlockType, BlockDefinition>
         displayName: 'Meter',
         iconKey: 'Activity',
         defaultTitle: 'Status',
-        createPayload: (): MeterBlockPayload => ({
+        createPayload: () => ({
             items: []
         })
     },

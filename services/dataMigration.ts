@@ -1,9 +1,9 @@
 
-import { Workspace, Note, CharacterData, CharacterForm } from '../types';
+import { Workspace, Note, CharacterData, CharacterForm, ModuleInstance, PrimitiveModuleType, CharacterBlockType, RecordKind } from '../types';
 import { parseWikiLinks } from './linkService';
 import { ensureUnresolvedNote } from './storageService';
-import { createCharacterBlock, normalizeCharacterBlock } from './characterModuleRegistry';
-import { ensureFormsStructure } from './characterResolution';
+import { createCharacterBlock, normalizeCharacterBlock } from './modularModuleRegistry';
+import { ensureFormsStructure } from './modularResolution';
 
 // --- Helper: Convert legacy string/v1 to v2 doc with InternalLinks ---
 
@@ -182,7 +182,7 @@ export const ensureCharacterData = (note: Note): { data: CharacterData, changed:
 };
 
 export const validateCharacterNote = (note: Note): Note => {
-    if (note.type !== 'Character') return note;
+    if (note.type !== 'modular' || note.recordKind !== 'character') return note;
 
     const { data, changed } = ensureCharacterData(note);
     
@@ -198,4 +198,153 @@ export const validateCharacterNote = (note: Note): Note => {
     }
     
     return note;
+};
+
+// --- Milestone 7: Modular Migration ---
+
+const convertBlockToModule = (block: any): ModuleInstance => {
+    let type: PrimitiveModuleType = 'custom';
+    let presetId: string | null = block.type;
+    let payload = block.payload || {};
+
+    // Mapping Logic
+    switch (block.type as CharacterBlockType) {
+        case 'identity':
+            type = 'fields';
+            presetId = 'identity';
+            // Payload is already { fields: [...] } which matches FieldsPayload
+            break;
+        case 'summary':
+        case 'appearance':
+        case 'personality':
+        case 'history':
+        case 'authorNotes':
+            type = 'richText';
+            presetId = block.type;
+            // Payload is { doc: ... }
+            break;
+        case 'stats':
+            type = 'fields'; // Stats mapped to fields for now
+            presetId = 'stats';
+            // StatsPayload is { stats: [{name, value}] }
+            // FieldsPayload is { fields: [{key, value}] }
+            if (payload.stats) {
+                payload = { fields: payload.stats.map((s: any) => ({ id: generateId(), key: s.name, value: String(s.value) })) };
+            }
+            break;
+        case 'abilities':
+            type = 'table'; // Abilities as table
+            presetId = 'abilities';
+            // AbilitiesPayload: { abilities: [{name, type, descriptionDoc, tags}] }
+            // TablePayload: { columns, rows }
+            if (payload.abilities) {
+                payload = { 
+                    columns: ['Name', 'Type', 'Tags', 'Description'], 
+                    rows: payload.abilities.map((a: any) => ({
+                        id: generateId(),
+                        Name: a.name,
+                        Type: a.type,
+                        Tags: a.tags?.join(', '),
+                        Description: a.descriptionDoc
+                    }))
+                };
+            }
+            break;
+        case 'items':
+            type = 'table';
+            presetId = 'items';
+            // ItemsPayload: { items: [{name, qty, notes, isEquipped}] }
+            if (payload.items) {
+                payload = {
+                    columns: ['Qty', 'Name', 'Notes'],
+                    rows: payload.items.map((i: any) => ({
+                        id: generateId(),
+                        Qty: i.qty,
+                        Name: i.name,
+                        Notes: i.notes
+                    }))
+                };
+            }
+            break;
+        case 'relationships':
+            type = 'links'; // Mapped to links? Or Custom 'refs'?
+            // Prompt says 'links': { links: Array<{ targetNoteId, label, relation }> }
+            // RelationshipsPayload: { relationships: [{ targetCharacterId, type, notesDoc }] }
+            type = 'links';
+            presetId = 'relationships';
+            if (payload.relationships) {
+                payload = {
+                    links: payload.relationships.map((r: any) => ({
+                        targetNoteId: r.targetCharacterId,
+                        relation: r.type,
+                        label: '' // Resolved later? Or store nameFallback
+                    }))
+                };
+            }
+            break;
+        case 'locations':
+            type = 'custom'; // Too specific for simple links right now
+            presetId = 'locations';
+            break;
+        case 'tags':
+            type = 'tags';
+            presetId = 'tags';
+            break;
+        default:
+            type = 'custom';
+            presetId = block.type;
+    }
+
+    return {
+        moduleId: block.blockId || generateId(),
+        type,
+        title: block.title || presetId || 'Module',
+        collapsed: block.collapsed || false,
+        presetId,
+        payload
+    };
+};
+
+export const migrateNoteToModular = (note: any): Note => {
+    const migrated = { ...note };
+    
+    // 1. Detect Legacy Type
+    // If type was "Character", "Place", etc.
+    const typeStr = note.meta?.type || note.type;
+    
+    if (['Character', 'Place', 'Item', 'Event', 'Lore'].includes(typeStr)) {
+        migrated.type = 'modular';
+        migrated.recordKind = typeStr.toLowerCase() as RecordKind;
+    } else if (typeStr === 'General' || !typeStr) {
+        migrated.type = 'general';
+    } else if (typeStr === 'Canvas') {
+        migrated.type = 'canvas';
+    } else {
+        // Assume general or keep as is if already modular
+        if (migrated.type !== 'modular') migrated.type = 'general';
+    }
+
+    // 2. Migrate Modules (Character)
+    if (migrated.recordKind === 'character' && !migrated.modules) {
+        const charData = note.metadata?.characterData || note.characterData;
+        if (charData && charData.blocks) {
+            migrated.modules = charData.blocks.map(convertBlockToModule);
+            // Default layout
+            migrated.layout = migrated.modules.map((m: any, i: number) => ({ moduleId: m.moduleId, x: 0, y: i, w: 12, h: 1 }));
+            migrated.templateId = charData.templateId;
+        }
+    }
+
+    // 3. Initialize Place Data
+    if (migrated.recordKind === 'place' && !migrated.placeData) {
+        migrated.placeData = { parentPlaceId: null };
+        migrated.eras = { order: [], byId: {} };
+    }
+
+    // 4. Ensure Template ID
+    if (migrated.type === 'modular' && !migrated.templateId) {
+        migrated.templateId = 'blank'; 
+    }
+
+    return migrated as Note;
 };
