@@ -1,12 +1,13 @@
 
 import React from 'react';
-import { Tab, Workspace, Note, NoteTab, StarMapTab, GlossaryTab, SearchResultsTab, MissingTab, GlossaryEntryTab } from '../../types';
+import { Tab, Workspace, Note, NoteTab, StarMapTab, GlossaryTab, SearchResultsTab, MissingTab, GlossaryEntryTab, PendingReviewTab } from '../../types';
 import NoteEditor from '../NoteEditor';
 import StarMap from '../StarMap';
 import GlossaryView from '../GlossaryView';
 import GlossaryEntryView from './GlossaryEntryView';
+import PendingReviewView from './PendingReviewView';
 import SearchResultsView from './SearchResultsView';
-import { FileWarning, FileText, Globe, Book, Search, ZoomIn, ZoomOut, Maximize2, FileType } from 'lucide-react';
+import { FileWarning, FileText, Globe, Book, Search, ZoomIn, ZoomOut, Maximize2, Edit3, Clock } from 'lucide-react';
 import { IconButton } from '../ui/Primitives';
 
 // Registry Definition
@@ -65,17 +66,31 @@ export const ViewRegistry = {
         ),
         icon: Book
     },
-    glossary_entry: {
-        component: ({ tab, workspace, onUpdateState, onCloseSelf, onUpdateWorkspace, onOpenNote }: any) => (
+    glossary_term: {
+        component: ({ tab, workspace, onUpdateState, onCloseSelf, onOpenNote, onOpenTerm, isFocusedPane }: any) => (
             <GlossaryEntryView 
                 tab={tab as GlossaryEntryTab} 
                 workspace={workspace} 
-                onUpdateWorkspace={onUpdateWorkspace}
-                onCloseSelf={onCloseSelf} 
+                onUpdateState={onUpdateState} 
+                onCloseSelf={onCloseSelf}
                 onOpenNote={onOpenNote}
+                onOpenTerm={onOpenTerm}
+                isFocusedPane={isFocusedPane}
             />
         ),
-        icon: FileType
+        icon: Edit3
+    },
+    pending_review: {
+        component: ({ tab, workspace, onCloseSelf, onOpenNote, onOpenTerm }: any) => (
+            <PendingReviewView
+                tab={tab as PendingReviewTab}
+                workspace={workspace}
+                onCloseSelf={onCloseSelf}
+                onOpenNote={onOpenNote}
+                onOpenTerm={onOpenTerm}
+            />
+        ),
+        icon: Clock
     },
     search: {
         component: ({ tab, workspace, onUpdateState, onOpenNote }: any) => (

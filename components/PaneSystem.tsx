@@ -1,7 +1,7 @@
 
 import React from 'react';
-import { PaneSystemState, PaneState, Tab, PaneId, Workspace, Note, NoteTab, StarMapTab, GlossaryTab, MissingTab, PaneLayout } from '../types';
-import { X, Globe, FileText, Book, FileWarning, Maximize2, ZoomIn, ZoomOut, Plus, Map as MapIcon, ChevronRight, Minimize2 } from 'lucide-react';
+import { PaneSystemState, PaneState, Tab, PaneId, Workspace, Note, NoteTab, StarMapTab, GlossaryTab, MissingTab, PaneLayout, GlossaryEntryTab, PendingReviewTab } from '../types';
+import { X, Globe, FileText, Book, FileWarning, Maximize2, ZoomIn, ZoomOut, Plus, Map as MapIcon, ChevronRight, Minimize2, Edit3, Clock } from 'lucide-react';
 import { DndContext, DragOverlay, useSensor, useSensors, PointerSensor, KeyboardSensor, DragStartEvent, DragEndEvent, closestCenter, defaultDropAnimationSideEffects, DropAnimation, useDroppable } from '@dnd-kit/core';
 import { SortableContext, useSortable, horizontalListSortingStrategy, sortableKeyboardCoordinates } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -110,10 +110,11 @@ const Pane: React.FC<{
     onUpdateNote: (note: Note, ws?: Workspace) => void; 
     onGenerateTitle: (note: Note) => void; 
     onOpenNote: (id: string) => void; 
+    onOpenTerm: (id: string) => void;
     onUpdateTabState: (paneId: PaneId, tabId: string, partial: any) => void; 
     onCreateNote: () => void;
     onOpenMap: () => void;
-}> = ({ pane, isFocused, canClose, onFocus, onCloseTab, onClosePane, onSelectTab, workspace, onUpdateNote, onGenerateTitle, onOpenNote, onUpdateTabState, onCreateNote, onOpenMap }) => {
+}> = ({ pane, isFocused, canClose, onFocus, onCloseTab, onClosePane, onSelectTab, workspace, onUpdateNote, onGenerateTitle, onOpenNote, onOpenTerm, onUpdateTabState, onCreateNote, onOpenMap }) => {
     const { setNodeRef } = useDroppable({ id: pane.id });
     const activeTab = pane.tabs.find(t => t.id === pane.activeTabId);
     
@@ -143,6 +144,7 @@ const Pane: React.FC<{
                         onUpdateNote,
                         onGenerateTitle,
                         onOpenNote,
+                        onOpenTerm,
                         onCloseSelf: () => onCloseTab(activeTab.id),
                         isFocusedPane: isFocused
                     })
@@ -183,11 +185,12 @@ export const PaneGrid: React.FC<{
     onUpdateNote: (note: Note, ws?: Workspace) => void; 
     onGenerateTitle: (note: Note) => void; 
     onOpenNote: (id: string) => void; 
+    onOpenTerm: (id: string) => void;
     onCreateNote: () => void;
     onOpenMap: () => void;
 }> = ({ 
     system, onFocusPane, onCloseTab, onClosePane, onSelectTab, onReorderTab, onMoveTab, onUpdateTabState, handleDragToSplit,
-    workspace, onUpdateNote, onGenerateTitle, onOpenNote, onCreateNote, onOpenMap
+    workspace, onUpdateNote, onGenerateTitle, onOpenNote, onOpenTerm, onCreateNote, onOpenMap
 }) => {
     const [activeDragTab, setActiveDragTab] = React.useState<Tab | null>(null);
     const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 10 } }));
@@ -266,6 +269,7 @@ export const PaneGrid: React.FC<{
             onUpdateNote={onUpdateNote} 
             onGenerateTitle={onGenerateTitle} 
             onOpenNote={onOpenNote} 
+            onOpenTerm={onOpenTerm}
             onUpdateTabState={onUpdateTabState}
             onCreateNote={onCreateNote}
             onOpenMap={onOpenMap} 

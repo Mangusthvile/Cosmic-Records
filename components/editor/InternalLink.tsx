@@ -62,11 +62,10 @@ export const InternalLink = Node.create({
             // Group 3: Display text
             new InputRule({
                 find: /\[\[([^\]]+)\]\](\(([^)]+)\))?$/,
-                handler: (props) => {
-                    const { state, range, match } = props;
+                handler: ({ state, range, match }) => {
                     const title = match[1];
                     const display = match[3]; // Group 3 contains the text inside parens
-                    const tr = state.tr;
+                    const { tr } = state;
                     
                     const resolver = this.options.resolver;
                     let id = resolver ? resolver(title) : null;
@@ -90,13 +89,8 @@ export const InternalLink = Node.create({
 });
 
 const InternalLinkComponent: React.FC<any> = ({ node }) => {
-    const context = useEditorContext();
-    const { workspace, onOpenNote } = context;
-    
-    const attrs = node.attrs || {};
-    const targetId = attrs.targetId;
-    const display = attrs.display;
-    const fallbackTitle = attrs.fallbackTitle;
+    const { workspace, onOpenNote } = useEditorContext();
+    const { targetId, display, fallbackTitle } = node.attrs;
 
     const note = workspace.notes[targetId];
     

@@ -2,25 +2,25 @@
 import { 
     Workspace, Note, DiskNote, IndexEntry, IndexData, UIState, UnresolvedOrigin,
     SettingsData, TemplatesData, HotkeysData, MapsData, CollectionsData, NoteTypeDefinition,
-    GlossaryTerm, GlossaryData, PendingTerm
+    GlossaryTerm, PendingTerm, GlossaryIndex, GlossaryOccurrences
 } from '../types';
 import { getHandle, setHandle } from './idb';
 import { VaultAdapter, FileSystemAccessAdapter, IndexedDbAdapter } from './adapters';
 import { join, dirname, basename } from './path';
-import { logNotification } from './storageService';
+import { logNotification, normalizeKey } from './storageService';
 import { extractOutboundLinks } from './linkService';
 
 // --- Constants ---
 const VAULT_HANDLE_KEY = 'cosmic_vault_handle';
 const METADATA_DIR = '.cosmicrecords';
 const BACKUP_DIR = '.cosmicrecords/backup';
-const ATTACHMENTS_DIR = 'Attachments';
-
-// Glossary Paths
-const GLOSSARY_BASE_DIR = '.cosmicrecords/glossary';
+const GLOSSARY_DIR = '.cosmicrecords/glossary';
 const GLOSSARY_TERMS_DIR = '.cosmicrecords/glossary/terms';
 const GLOSSARY_PENDING_DIR = '.cosmicrecords/glossary/pending';
-const GLOSSARY_INDEX_FILE = '.cosmicrecords/glossary_index.json';
+const GLOSSARY_INDEX_FILE = 'glossary_index.json';
+const GLOSSARY_OCCURRENCES_FILE = 'glossary_occurrences.json';
+
+const ATTACHMENTS_DIR = 'Attachments';
 
 // Metadata Filenames
 const FILES = {
@@ -29,7 +29,9 @@ const FILES = {
     FOLDERS: 'folders.json',
     TAGS: 'tags.json',
     TEMPLATES: 'templates.json',
-    // GLOSSARY: 'glossary.json', // Deprecated in favor of directory
+    GLOSSARY_LEGACY: 'glossary.json', // Old file
+    GLOSSARY_INDEX: GLOSSARY_INDEX_FILE, 
+    GLOSSARY_OCCURRENCES: GLOSSARY_OCCURRENCES_FILE, // New file
     SETTINGS: 'settings.json',
     HOTKEYS: 'hotkeys.json',
     MAPS: 'maps.json',
@@ -257,39 +259,6 @@ const parseNoteFromJSON = (jsonString: string): Note | null => {
     }
 };
 
-// --- Glossary Serialization ---
-
-const serializeGlossaryTerm = (term: GlossaryTerm): string => {
-    const disk = {
-        termId: term.id,
-        primaryName: term.term,
-        aliases: term.aliases,
-        definitionRichText: term.definitionDoc,
-        universeScopes: term.universeTags,
-        createdAt: term.createdAt,
-        updatedAt: term.updatedAt,
-        canonical: true 
-    };
-    return JSON.stringify(disk, null, 2);
-};
-
-const parseGlossaryTerm = (json: string): GlossaryTerm => {
-    const disk = JSON.parse(json);
-    return {
-        id: disk.termId,
-        term: disk.primaryName,
-        aliases: disk.aliases || [],
-        definitionDoc: disk.definitionRichText || { type: 'doc', content: [] },
-        definition_plain: noteContentToPlainText({ content: disk.definitionRichText }),
-        universeTags: disk.universeScopes || [],
-        isCanon: true,
-        linksTo: [],
-        sourceRefs: [],
-        createdAt: disk.createdAt || Date.now(),
-        updatedAt: disk.updatedAt || Date.now()
-    };
-};
-
 // --- Main Service ---
 
 export class VaultService {
@@ -453,28 +422,10 @@ export class VaultService {
         await this.safeWriteJson(join(METADATA_DIR, FILES.INDEX), indexData);
     }, 2000); 
 
-    // Glossary Index Save
-    private debouncedSaveGlossaryIndex = debounce(async (ws: Workspace) => {
-        if (!this.adapter) return;
-        const index: Record<string, string> = {};
-        
-        Object.values(ws.glossary.terms).forEach(term => {
-            const id = term.id;
-            const norm = term.term.trim().toLowerCase();
-            index[norm] = id;
-            term.aliases.forEach(alias => {
-                index[alias.trim().toLowerCase()] = id;
-            });
-        });
-        
-        await this.safeWriteJson(GLOSSARY_INDEX_FILE, index);
-    }, 1000);
-
     private async saveMetadataInternal(ws: Workspace) {
         if (!this.adapter) return;
         await Promise.all([
             this.safeWriteJson(join(METADATA_DIR, FILES.FOLDERS), ws.folders),
-            // this.safeWriteJson(join(METADATA_DIR, FILES.GLOSSARY), ws.glossary), // REMOVED: Now file-based
             this.safeWriteJson(join(METADATA_DIR, FILES.NOTIFICATIONS), ws.notificationLog),
         ]);
     }
@@ -491,75 +442,196 @@ export class VaultService {
         await this.safeWriteJson(join(METADATA_DIR, FILES.UI_STATE), uiState);
     }, 500);
 
-    // --- Glossary Persistence ---
+    // --- Glossary Persistence (Milestone 5) ---
 
-    async loadGlossary(): Promise<{ terms: Record<string, GlossaryTerm>, pending: PendingTerm[] }> {
-        const result = { terms: {} as Record<string, GlossaryTerm>, pending: [] as PendingTerm[] };
+    // Write a single term file
+    public async saveGlossaryTerm(term: GlossaryTerm) {
+        if (!this.adapter) return;
+        await this.adapter.mkdir(GLOSSARY_TERMS_DIR, { recursive: true });
+        const filename = `${term.termId}.json`;
+        await this.safeWriteJson(join(GLOSSARY_TERMS_DIR, filename), term);
+    }
+
+    // Write a single pending term file
+    public async savePendingTerm(pending: PendingTerm) {
+        if (!this.adapter) return;
+        await this.adapter.mkdir(GLOSSARY_PENDING_DIR, { recursive: true });
+        const filename = `${pending.pendingId}.json`;
+        await this.safeWriteJson(join(GLOSSARY_PENDING_DIR, filename), pending);
+    }
+
+    // Delete term file
+    public async deleteGlossaryTerm(termId: string) {
+        if (!this.adapter) return;
+        const filename = `${termId}.json`;
+        const path = join(GLOSSARY_TERMS_DIR, filename);
+        if (await this.adapter.exists(path)) {
+            await this.adapter.delete(path);
+        }
+    }
+
+    // Delete pending file
+    public async deletePendingTerm(pendingId: string) {
+        if (!this.adapter) return;
+        const filename = `${pendingId}.json`;
+        const path = join(GLOSSARY_PENDING_DIR, filename);
+        if (await this.adapter.exists(path)) {
+            await this.adapter.delete(path);
+        }
+    }
+
+    // Save the index file (debounced)
+    public debouncedSaveGlossaryIndex = debounce(async (index: GlossaryIndex) => {
+        if (!this.adapter) return;
+        await this.safeWriteJson(join(METADATA_DIR, FILES.GLOSSARY_INDEX), index);
+    }, 500);
+
+    public saveGlossaryIndex(index: GlossaryIndex) {
+        this.debouncedSaveGlossaryIndex(index);
+    }
+
+    // Save occurrences (debounced)
+    public debouncedSaveOccurrences = debounce(async (occurrences: GlossaryOccurrences) => {
+        if (!this.adapter) return;
+        await this.safeWriteJson(join(METADATA_DIR, FILES.GLOSSARY_OCCURRENCES), occurrences);
+    }, 1000);
+
+    // Load full glossary system
+    private async loadGlossarySystem(): Promise<{ 
+        terms: Record<string, GlossaryTerm>, 
+        pending: Record<string, PendingTerm>, 
+        index: GlossaryIndex, 
+        occurrences: GlossaryOccurrences 
+    }> {
+        const result = { 
+            terms: {} as Record<string, GlossaryTerm>, 
+            pending: {} as Record<string, PendingTerm>, 
+            index: { 
+                schemaVersion: 1, 
+                updatedAt: Date.now(), 
+                lookup: {}, 
+                terms: {}, 
+                pending: { count: 0, ids: [] } 
+            } as GlossaryIndex,
+            occurrences: {
+                schemaVersion: 1,
+                updatedAt: Date.now(),
+                terms: {}
+            } as GlossaryOccurrences
+        };
+        
         if (!this.adapter) return result;
 
-        // Ensure Dirs
-        await this.adapter.mkdir(GLOSSARY_TERMS_DIR, { recursive: true });
-        await this.adapter.mkdir(GLOSSARY_PENDING_DIR, { recursive: true });
-
-        // Load Terms
-        const termFiles = await this.adapter.listDir(GLOSSARY_TERMS_DIR);
-        for (const file of termFiles) {
-            if (file.kind === 'file' && file.name.endsWith('.json')) {
-                try {
-                    const content = await this.adapter.readFile(file.path);
-                    const term = parseGlossaryTerm(content as string);
-                    result.terms[term.id] = term;
-                } catch(e) { console.warn(`Failed to load term ${file.name}`, e); }
-            }
+        // 1. Try Load Index & Occurrences
+        const indexPath = join(METADATA_DIR, FILES.GLOSSARY_INDEX);
+        if (await this.adapter.exists(indexPath)) {
+            result.index = await this.safeReadJson<GlossaryIndex>(indexPath, result.index);
+        } else {
+            // Index missing - check for legacy or rebuild
+            await this.rebuildGlossaryIndex(result.index);
         }
 
-        // Load Pending
-        const pendingFiles = await this.adapter.listDir(GLOSSARY_PENDING_DIR);
-        for (const file of pendingFiles) {
-            if (file.kind === 'file' && file.name.endsWith('.json')) {
-                try {
-                    const content = await this.adapter.readFile(file.path);
-                    const pending = JSON.parse(content as string) as PendingTerm;
-                    result.pending.push(pending);
-                } catch(e) { /* ignore */ }
+        const occurrencesPath = join(METADATA_DIR, FILES.GLOSSARY_OCCURRENCES);
+        if (await this.adapter.exists(occurrencesPath)) {
+            result.occurrences = await this.safeReadJson<GlossaryOccurrences>(occurrencesPath, result.occurrences);
+        }
+
+        // 2. Load Full Terms (based on files in dir to be robust, or index? Directory scan is safer source of truth)
+        if (await this.adapter.exists(GLOSSARY_TERMS_DIR)) {
+            const files = await this.adapter.listDir(GLOSSARY_TERMS_DIR);
+            await Promise.all(files.map(async (f) => {
+                if (f.name.endsWith('.json')) {
+                    const term = await this.safeReadJson<GlossaryTerm>(f.path, null as any);
+                    if (term && term.termId) {
+                        result.terms[term.termId] = term;
+                    }
+                }
+            }));
+        }
+
+        // 3. Load Pending
+        if (await this.adapter.exists(GLOSSARY_PENDING_DIR)) {
+            const files = await this.adapter.listDir(GLOSSARY_PENDING_DIR);
+            await Promise.all(files.map(async (f) => {
+                if (f.name.endsWith('.json')) {
+                    const pending = await this.safeReadJson<PendingTerm>(f.path, null as any);
+                    if (pending && pending.pendingId) {
+                        result.pending[pending.pendingId] = pending;
+                    }
+                }
+            }));
+        }
+
+        // Migration Check: If legacy glossary.json exists but no terms loaded, try migrate
+        const legacyPath = join(METADATA_DIR, FILES.GLOSSARY_LEGACY);
+        if (Object.keys(result.terms).length === 0 && (await this.adapter.exists(legacyPath))) {
+            const legacy = await this.safeReadJson<any>(legacyPath, {});
+            if (legacy && legacy.terms) {
+                // Migrate
+                await this.adapter.mkdir(GLOSSARY_TERMS_DIR, { recursive: true });
+                for (const termId in legacy.terms) {
+                    const t = legacy.terms[termId];
+                    // Map legacy fields if needed
+                    const newTerm: GlossaryTerm = {
+                        schemaVersion: 1,
+                        termId: t.termId,
+                        primaryName: t.primaryName,
+                        aliases: t.aliases || [],
+                        definitionRichText: t.definitionRichText || { type: 'doc', content: [] },
+                        universeScopes: t.universeTags || [], // Rename mapping
+                        createdAt: t.createdAt || Date.now(),
+                        updatedAt: t.updatedAt || Date.now(),
+                        canonical: true
+                    };
+                    await this.saveGlossaryTerm(newTerm);
+                    result.terms[newTerm.termId] = newTerm;
+                    
+                    // Update index in memory
+                    const keys = [newTerm.primaryName, ...newTerm.aliases].map(normalizeKey);
+                    keys.forEach(k => result.index.lookup[k] = newTerm.termId);
+                    result.index.terms[newTerm.termId] = {
+                        primaryName: newTerm.primaryName,
+                        aliases: newTerm.aliases,
+                        universeScopes: newTerm.universeScopes,
+                        createdAt: newTerm.createdAt,
+                        updatedAt: newTerm.updatedAt,
+                        canonical: true
+                    };
+                }
+                // Save new index
+                await this.saveGlossaryIndex(result.index);
             }
         }
 
         return result;
     }
 
-    async saveGlossaryTerm(term: GlossaryTerm) {
+    private async rebuildGlossaryIndex(indexObj: GlossaryIndex) {
         if (!this.adapter) return;
-        await this.adapter.mkdir(GLOSSARY_TERMS_DIR, { recursive: true });
-        const path = join(GLOSSARY_TERMS_DIR, `${term.id}.json`);
-        await this.safeWriteJson(path, JSON.parse(serializeGlossaryTerm(term)));
+        indexObj.lookup = {};
+        indexObj.terms = {};
         
-        if (this.workspaceCache) {
-             this.debouncedSaveGlossaryIndex(this.workspaceCache);
+        if (await this.adapter.exists(GLOSSARY_TERMS_DIR)) {
+            const files = await this.adapter.listDir(GLOSSARY_TERMS_DIR);
+            for (const f of files) {
+                if (f.name.endsWith('.json')) {
+                    const term = await this.safeReadJson<GlossaryTerm>(f.path, null as any);
+                    if (term && term.termId) {
+                        const keys = [term.primaryName, ...term.aliases].map(normalizeKey);
+                        keys.forEach(k => indexObj.lookup[k] = term.termId);
+                        indexObj.terms[term.termId] = {
+                            primaryName: term.primaryName,
+                            aliases: term.aliases,
+                            universeScopes: term.universeScopes,
+                            createdAt: term.createdAt,
+                            updatedAt: term.updatedAt,
+                            canonical: true
+                        };
+                    }
+                }
+            }
         }
-    }
-
-    async deleteGlossaryTerm(termId: string) {
-        if (!this.adapter) return;
-        const path = join(GLOSSARY_TERMS_DIR, `${termId}.json`);
-        await this.adapter.delete(path);
-        
-        if (this.workspaceCache) {
-             this.debouncedSaveGlossaryIndex(this.workspaceCache);
-        }
-    }
-
-    async savePendingTerm(pending: PendingTerm) {
-        if (!this.adapter) return;
-        await this.adapter.mkdir(GLOSSARY_PENDING_DIR, { recursive: true });
-        const path = join(GLOSSARY_PENDING_DIR, `${pending.id}.json`);
-        await this.safeWriteJson(path, pending);
-    }
-
-    async deletePendingTerm(pendingId: string) {
-        if (!this.adapter) return;
-        const path = join(GLOSSARY_PENDING_DIR, `${pendingId}.json`);
-        await this.adapter.delete(path);
+        await this.saveGlossaryIndex(indexObj);
     }
 
     // --- Operations ---
@@ -667,7 +739,7 @@ export class VaultService {
         const [
             manifest, indexData, foldersData, tagsData, 
             settingsData, templatesData, hotkeysData, mapsData, collectionsData,
-            notificationsData
+            notificationsData, glossarySystem
         ] = await Promise.all([
             this.safeReadJson<any>(join(METADATA_DIR, FILES.MANIFEST), {}),
             this.safeReadJson<IndexData>(join(METADATA_DIR, FILES.INDEX), { schemaVersion: 1, updatedAt: 0, notes: {} }),
@@ -679,6 +751,7 @@ export class VaultService {
             this.safeReadJson<MapsData>(join(METADATA_DIR, FILES.MAPS), createDefaultMaps()),
             this.safeReadJson<CollectionsData>(join(METADATA_DIR, FILES.COLLECTIONS), createDefaultCollections()),
             this.safeReadJson<any>(join(METADATA_DIR, FILES.NOTIFICATIONS), []),
+            this.loadGlossarySystem()
         ]);
 
         const defaultFolders = {
@@ -686,9 +759,6 @@ export class VaultService {
             [SYSTEM_IDS.UNRESOLVED]: { id: SYSTEM_IDS.UNRESOLVED, name: SYSTEM_DIRS.UNRESOLVED, type: 'system', parentId: null, createdAt: 0, updatedAt: 0, order: 1 },
             [SYSTEM_IDS.ARCHIVED]: { id: SYSTEM_IDS.ARCHIVED, name: SYSTEM_DIRS.ARCHIVED, type: 'system', parentId: null, createdAt: 0, updatedAt: 0, order: 999 }
         };
-
-        // Load Glossary
-        const glossaryData = await this.loadGlossary();
 
         const ws: Workspace = {
             schema_version: "1.0",
@@ -705,11 +775,7 @@ export class VaultService {
             maps: mapsData,
 
             tags: tagsData?.tags || {},
-            glossary: {
-                terms: glossaryData.terms,
-                pending: glossaryData.pending,
-                ignoreList: [] // Persist ignore list in separate file if needed, skipping for MVP
-            },
+            glossary: glossarySystem, // New Glossary Structure loaded from separate files/index
             
             indexes: {
                 title_to_note_id: {},
@@ -720,13 +786,17 @@ export class VaultService {
             },
             notifications: {},
             notificationLog: notificationsData || [],
-            user_preferences: { ai: { proactive: true, allow_auto_edits: false, remember_preferences: true }, tts: { mode: "selected_text_only" }, ui: { gray_out_outdated_titles: true, show_badges_in_search: true, show_unresolved_prominently: true } }, 
+            user_preferences: { 
+                ai: { proactive: true, allow_auto_edits: false, remember_preferences: true }, 
+                tts: { mode: "selected_text_only" }, 
+                ui: { gray_out_outdated_titles: true, show_badges_in_search: true, show_unresolved_prominently: true },
+                widgets: { autoOpenRecommended: true } 
+            }, 
 
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
         };
 
-        // Build Note Index
         if (indexData && indexData.notes) {
             const entries = indexData.notes;
             Object.values(entries).forEach((entry: IndexEntry) => {
@@ -773,9 +843,6 @@ export class VaultService {
                 if (note.status === 'Outdated') ws.indexes.outdated_note_ids.push(note.id);
             });
         }
-        
-        // Rebuild Glossary Index
-        this.debouncedSaveGlossaryIndex(ws);
 
         return ws;
     }
@@ -878,15 +945,6 @@ export class VaultService {
         this.workspaceCache.indexes.unresolved_note_ids = Object.values(notes).filter(n => n.unresolved).map(n => n.id);
 
         await this.safeWriteJson(join(METADATA_DIR, FILES.INDEX), indexData);
-        
-        // Rebuild Glossary (Simple scan)
-        const glossaryData = await this.loadGlossary();
-        this.workspaceCache.glossary = { 
-            terms: glossaryData.terms, 
-            pending: glossaryData.pending,
-            ignoreList: this.workspaceCache.glossary.ignoreList
-        };
-        this.debouncedSaveGlossaryIndex(this.workspaceCache);
     }
 
     async resyncVault(mode: 'fast' | 'full'): Promise<void> {
@@ -914,7 +972,7 @@ export class VaultService {
         this.debouncedSaveHotkeys(ws.hotkeys);
         this.debouncedSaveMaps(ws.maps);
         this.debouncedSaveCollections({ schemaVersion: 1, updatedAt: Date.now(), collections: ws.collections });
-        this.debouncedSaveGlossaryIndex(ws);
+        this.debouncedSaveOccurrences(ws.glossary.occurrences);
     }
 }
 

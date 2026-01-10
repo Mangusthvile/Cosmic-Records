@@ -1,9 +1,9 @@
 
 import React from 'react';
-import { Node, mergeAttributes, InputRule } from '@tiptap/core';
+import { Node, mergeAttributes } from '@tiptap/core';
 import { ReactNodeViewRenderer, NodeViewWrapper } from '@tiptap/react';
 import { useEditorContext } from './EditorContext';
-import { Book } from 'lucide-react';
+import { BookOpen } from 'lucide-react';
 
 export const GlossaryLink = Node.create({
     name: 'glossaryLink',
@@ -16,7 +16,7 @@ export const GlossaryLink = Node.create({
         return {
             termId: { default: null },
             display: { default: null },
-            fallbackTerm: { default: null }
+            fallbackText: { default: null }
         };
     },
 
@@ -32,50 +32,54 @@ export const GlossaryLink = Node.create({
         return ReactNodeViewRenderer(GlossaryLinkComponent);
     },
 
-    addInputRules() {
-        // Matches {{Term}}
-        return [
-            new InputRule({
-                find: /\{\{([^}]+)\}\}$/,
-                handler: (props) => {
-                    const { state, range, match } = props;
-                    // Placeholder logic if needed
-                },
-            }),
-        ];
-    },
+    addProseMirrorPlugins() {
+        return [];
+    }
 });
 
 const GlossaryLinkComponent: React.FC<any> = ({ node }) => {
-    const context = useEditorContext();
-    const workspace = context.workspace;
-    
-    // Safety check for node attributes
-    const attrs = node.attrs || {};
-    const termId = attrs.termId;
-    const display = attrs.display;
-    const fallbackTerm = attrs.fallbackTerm;
-    
+    const { workspace, onOpenTerm } = useEditorContext();
+    const { termId, display, fallbackText } = node.attrs;
     const term = workspace.glossary.terms[termId];
     
-    const label = display || (term ? term.term : null) || fallbackTerm || "Unknown Term";
-    const isMissing = !term;
+    // Dispatch event for Definer widget (secondary/hover)
+    const handleMouseEnter = () => {
+        if (term) {
+            window.dispatchEvent(new CustomEvent('glossary-hover', { detail: { termId } }));
+        }
+    };
 
-    const tooltip = term ? `${term.term}: ${(term.definition_plain || '').substring(0, 100)}...` : "Term not found";
+    const handleClick = (e: React.MouseEvent) => {
+        e.stopPropagation();
+        
+        // Primary Action: Open Tab
+        if (onOpenTerm && termId) {
+            onOpenTerm(termId);
+        } else {
+            // Fallback: Widget event
+            window.dispatchEvent(new CustomEvent('glossary-click', { detail: { termId } }));
+        }
+    };
+
+    const handleRightClick = (e: React.MouseEvent) => {
+        // Optional: Context menu could be handled here
+    };
+
+    const label = display || (term ? term.primaryName : fallbackText) || "Unknown Term";
 
     return (
         <NodeViewWrapper as="span" className="inline-block align-middle mx-0.5 select-none">
             <span 
+                onMouseEnter={handleMouseEnter}
+                onClick={handleClick}
+                onContextMenu={handleRightClick}
                 className={`
-                    inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.9em] font-medium transition-colors cursor-help border
-                    ${isMissing 
-                        ? 'bg-zinc-800 text-muted border-zinc-700' 
-                        : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/20'
-                    }
+                    inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[0.9em] font-medium transition-colors cursor-pointer border
+                    bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20
                 `}
-                title={tooltip}
+                title={term ? `Open: ${term.primaryName}` : "Missing Glossary Term"}
             >
-                <Book size={10} className="opacity-50" />
+                <BookOpen size={10} className="opacity-70" />
                 <span className="truncate max-w-[200px]">{label}</span>
             </span>
         </NodeViewWrapper>

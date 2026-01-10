@@ -5,6 +5,7 @@ import { Workspace } from '../../types';
 interface EditorContextProps {
     workspace: Workspace;
     onOpenNote: (id: string) => void;
+    onOpenTerm?: (id: string) => void; 
 }
 
 const EditorContext = createContext<EditorContextProps | null>(null);

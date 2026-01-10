@@ -1,7 +1,7 @@
 
 import React from 'react';
 import { WidgetId, Workspace, Tab } from '../../types';
-import { List, Link2, Book, Sparkles, Bell, Dices, Coins } from 'lucide-react';
+import { List, Link2, Book, Sparkles, Bell, Dices, Coins, AlignLeft, Clock, MessageSquare } from 'lucide-react';
 import OutlineWidget from './OutlineWidget';
 import BacklinksWidget from './BacklinksWidget';
 import GlossaryWidget from './GlossaryWidget';
@@ -9,12 +9,16 @@ import AIChatWidget from './AIChatWidget';
 import NotificationsWidget from './NotificationsWidget';
 import DiceRollWidget from './DiceRollWidget';
 import CoinFlipWidget from './CoinFlipWidget';
+import DefinitionWidget from './DefinitionWidget';
+import PendingReviewWidget from './PendingReviewWidget';
+import TermOccurrencesWidget from './TermOccurrencesWidget';
 
 export interface WidgetProps {
     workspace: Workspace;
     activeNoteId: string | null;
     activeTab: Tab | undefined;
     onOpenNote: (id: string) => void;
+    onOpenTerm: (id: string) => void;
     onUpdateWorkspace: (ws: Workspace) => void;
     state: any;
     onStateChange: (newState: any) => void;
@@ -27,16 +31,18 @@ export interface WidgetDefinition {
     component: React.FC<WidgetProps>;
     defaultState: any;
     description: string;
+    group: 'General' | 'Glossary' | 'Tools';
 }
 
-export const WIDGET_REGISTRY: Record<WidgetId, WidgetDefinition> = {
+export const WIDGET_REGISTRY: Record<string, WidgetDefinition> = {
     outline: {
         id: 'outline',
         title: 'Outline',
         icon: List,
         component: OutlineWidget,
         defaultState: {},
-        description: 'Table of contents for current note.'
+        description: 'Table of contents for current note.',
+        group: 'General'
     },
     backlinks: {
         id: 'backlinks',
@@ -44,15 +50,44 @@ export const WIDGET_REGISTRY: Record<WidgetId, WidgetDefinition> = {
         icon: Link2,
         component: BacklinksWidget,
         defaultState: {},
-        description: 'Incoming and outgoing links.'
+        description: 'Incoming and outgoing links.',
+        group: 'General'
+    },
+    definition: {
+        id: 'definition',
+        title: 'Definition',
+        icon: AlignLeft,
+        component: DefinitionWidget,
+        defaultState: { selectedTermId: null },
+        description: 'View full glossary definition.',
+        group: 'Glossary'
+    },
+    pending_review: {
+        id: 'pending_review',
+        title: 'Pending Review',
+        icon: Clock,
+        component: PendingReviewWidget,
+        defaultState: { selectedPendingId: null },
+        description: 'Review and approve new terms.',
+        group: 'Glossary'
+    },
+    term_occurrences: {
+        id: 'term_occurrences',
+        title: 'Mentions',
+        icon: MessageSquare,
+        component: TermOccurrencesWidget,
+        defaultState: { selectedTermId: null },
+        description: 'See where terms appear.',
+        group: 'Glossary'
     },
     glossary: {
         id: 'glossary',
-        title: 'Glossary',
+        title: 'Glossary Search',
         icon: Book,
         component: GlossaryWidget,
         defaultState: { search: '', view: 'search' },
-        description: 'Search and define terms.'
+        description: 'Search and define terms.',
+        group: 'Glossary'
     },
     ai_chat: {
         id: 'ai_chat',
@@ -60,7 +95,8 @@ export const WIDGET_REGISTRY: Record<WidgetId, WidgetDefinition> = {
         icon: Sparkles,
         component: AIChatWidget,
         defaultState: { history: [] },
-        description: 'Chat with the archives.'
+        description: 'Chat with the archives.',
+        group: 'General'
     },
     notifications: {
         id: 'notifications',
@@ -68,7 +104,8 @@ export const WIDGET_REGISTRY: Record<WidgetId, WidgetDefinition> = {
         icon: Bell,
         component: NotificationsWidget,
         defaultState: {},
-        description: 'Recent system events.'
+        description: 'Recent system events.',
+        group: 'Tools'
     },
     dice: {
         id: 'dice',
@@ -76,7 +113,8 @@ export const WIDGET_REGISTRY: Record<WidgetId, WidgetDefinition> = {
         icon: Dices,
         component: DiceRollWidget,
         defaultState: { history: [] },
-        description: 'Roll polyhedral dice.'
+        description: 'Roll polyhedral dice.',
+        group: 'Tools'
     },
     coinflip: {
         id: 'coinflip',
@@ -84,7 +122,8 @@ export const WIDGET_REGISTRY: Record<WidgetId, WidgetDefinition> = {
         icon: Coins,
         component: CoinFlipWidget,
         defaultState: { history: [] },
-        description: 'Heads or tails.'
+        description: 'Heads or tails.',
+        group: 'Tools'
     }
 };
 

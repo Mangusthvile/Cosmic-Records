@@ -1,4 +1,5 @@
 
+
 export type ID = string; // uuid
 export type ISODate = string; // legacy support if needed, but moving to number for Note
 export type Timestamp = number; // Date.now()
@@ -14,15 +15,16 @@ export type TemplateID = ID;
 export type MapNodeID = ID;
 export type NotificationID = ID;
 
-export type WidgetId = 'outline' | 'backlinks' | 'glossary' | 'ai_chat' | 'notifications' | 'dice' | 'coinflip';
+export type WidgetId = 'outline' | 'backlinks' | 'glossary' | 'ai_chat' | 'notifications' | 'dice' | 'coinflip' | 'definition' | 'pending_review' | 'term_occurrences';
 
 export interface UserPreferences {
   ai: { proactive: boolean; allow_auto_edits: boolean; remember_preferences: boolean };
   tts: { mode: string };
   ui: { gray_out_outdated_titles: boolean; show_badges_in_search: boolean; show_unresolved_prominently: boolean };
+  widgets: { autoOpenRecommended: boolean };
 }
 
-// --- CANONICAL DISK SCHEMA (Step 1: Canonical Metadata) ---
+// --- CANONICAL DISK SCHEMA ---
 
 export interface UnresolvedOrigin {
     sourceNoteId: string;
@@ -31,17 +33,17 @@ export interface UnresolvedOrigin {
 }
 
 export interface DiskNote {
-  schemaVersion: number; // bumped to 2
+  schemaVersion: number; 
   noteId: string;
   meta: {
     title: string;
-    type: string; // NoteType
+    type: string; 
     status: NoteStatus;
     unresolved: boolean;
     universeTag: string | null;
     createdAt: number;
     updatedAt: number;
-    folderPath: string; // Relative to vault root e.g. "Characters"
+    folderPath: string; 
     pinned: boolean;
     tags?: string[];
   };
@@ -55,8 +57,8 @@ export interface DiskNote {
   };
   content: {
     format: 'tiptap';
-    version: number; // 2
-    doc: any; // TipTap JSON
+    version: number; 
+    doc: any; 
   };
   modules: any[]; 
   links: {
@@ -80,7 +82,7 @@ export interface IndexEntry {
     createdAt: number;
     updatedAt: number;
     excerpt: string; 
-    folderId: string; // Mapped at runtime for convenience
+    folderId: string; 
     outboundLinks?: string[]; 
 }
 
@@ -193,7 +195,7 @@ export interface CollectionsData {
 // --- SEARCH TYPES ---
 export interface SearchFilters {
     folderId: string | 'all';
-    collectionId?: string | 'all'; // Added collection filtering
+    collectionId?: string | 'all'; 
     includeSubfolders: boolean;
     universeTagId: string | 'all' | 'none';
     type: string | 'all';
@@ -205,7 +207,7 @@ export interface SearchFilters {
 export type PaneLayout = 'single' | 'splitVertical' | 'splitHorizontal' | 'quad';
 export type PaneId = 'paneA' | 'paneB' | 'paneC' | 'paneD';
 
-export type ViewType = 'note' | 'starmap' | 'glossary' | 'glossary_entry' | 'missing' | 'search';
+export type ViewType = 'note' | 'starmap' | 'glossary' | 'glossary_term' | 'pending_review' | 'missing' | 'search';
 
 export interface ViewRef {
   id: string; 
@@ -247,6 +249,7 @@ export interface GlossaryViewState {
   selectedTermId: string | null;
   scrollY: number;
 }
+// Legacy Glossary Tab (Main View)
 export interface GlossaryTab extends ViewRef {
   kind: 'glossary';
   payload: {
@@ -255,15 +258,26 @@ export interface GlossaryTab extends ViewRef {
   state: GlossaryViewState;
 }
 
-export interface GlossaryEntryViewState {
-    mode: 'view' | 'edit';
-}
+// Milestone 5: Glossary Entry Tab (Editing a specific term)
 export interface GlossaryEntryTab extends ViewRef {
-    kind: 'glossary_entry';
+    kind: 'glossary_term';
     payload: {
         termId: string;
     };
-    state: GlossaryEntryViewState;
+    state: {
+        scrollY: number;
+    };
+}
+
+// Milestone 5 Step 2: Pending Review Tab
+export interface PendingReviewTab extends ViewRef {
+    kind: 'pending_review';
+    payload: {
+        pendingId: string;
+    };
+    state: {
+        scrollY: number;
+    };
 }
 
 export interface SearchResultsViewState {
@@ -288,7 +302,7 @@ export interface MissingTab extends ViewRef {
   state: any;
 }
 
-export type Tab = NoteTab | StarMapTab | GlossaryTab | GlossaryEntryTab | SearchResultsTab | MissingTab;
+export type Tab = NoteTab | StarMapTab | GlossaryTab | GlossaryEntryTab | PendingReviewTab | SearchResultsTab | MissingTab;
 
 export interface PaneState {
   id: PaneId;
@@ -301,7 +315,7 @@ export interface PaneSystemState {
   layout: PaneLayout;
   focusedPaneId: PaneId;
   panes: Record<PaneId, PaneState>;
-  paneOrder: PaneId[]; // Explicit order for deterministic layout
+  paneOrder: PaneId[]; 
 }
 
 // --- UI PERSISTENCE TYPES ---
@@ -325,11 +339,18 @@ export interface NotesNavigationState {
     };
 }
 
+export interface GlossaryNavigationState {
+    searchQuery: string;
+    selectedUniverses: string[];
+    isPendingCollapsed: boolean;
+    isTermsCollapsed: boolean;
+}
+
 export interface NavigationState {
     activeMode: AppMode;
     notes: NotesNavigationState;
     starmap?: any;
-    glossary?: any;
+    glossary?: GlossaryNavigationState;
 }
 
 export interface WidgetSystemState {
@@ -366,7 +387,14 @@ export interface Workspace {
 
   // Legacy
   tags: Record<TagID, Tag>;
-  glossary: GlossaryData;
+  
+  // Milestone 5: Glossary Structure
+  glossary: {
+    terms: Record<GlossaryTermID, GlossaryTerm>; // In-memory cache of full terms
+    pending: Record<ID, PendingTerm>;
+    index: GlossaryIndex;
+    occurrences: GlossaryOccurrences; // Milestone 5 Step 7
+  };
   
   // Runtime Indexes
   indexes: {
@@ -379,7 +407,7 @@ export interface Workspace {
   
   notifications: Record<NotificationID, Notification>;
   notificationLog: NotificationLogItem[]; 
-  user_preferences: any; 
+  user_preferences: UserPreferences; 
 
   created_at: ISODate;
   updated_at: ISODate;
@@ -388,7 +416,7 @@ export interface Workspace {
 export interface Note {
   id: ID;
   title: string; 
-  type: string; // NoteType
+  type: string; 
   status: NoteStatus;
   
   unresolved: boolean;
@@ -426,7 +454,7 @@ export interface Folder {
 export interface Collection {
     id: ID;
     name: string;
-    noteIds: ID[]; // References to notes, NO duplication
+    noteIds: ID[]; 
     createdAt: Timestamp;
     updatedAt: Timestamp;
 }
@@ -445,41 +473,56 @@ export interface UniverseTag {
   created_at: ISODate;
 }
 
-export interface GlossaryData {
-    terms: Record<GlossaryTermID, GlossaryTerm>;
-    pending: PendingTerm[];
-    ignoreList: string[]; // List of ignored terms
-    index?: Record<string, GlossaryTermID>; // In-memory index cache
-}
-
+// Milestone 5: Glossary Term
 export interface GlossaryTerm {
-  id: GlossaryTermID; // Mapped from 'termId' on disk
-  term: string;       // Mapped from 'primaryName' on disk          
+  schemaVersion: number;
+  termId: GlossaryTermID;
+  primaryName: string;
   aliases: string[];
-  definitionDoc: any; // Mapped from 'definitionRichText' on disk
-  definition_plain: string; // Legacy/Fallback
-  universeTags: string[]; // Mapped from 'universeScopes' on disk
-  isCanon: boolean;   // Mapped from 'canonical'
-  linksTo: GlossaryTermID[]; // Derived index
-  sourceRefs: string[]; // IDs of notes referencing this
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
+  definitionRichText: any; // TipTap JSON
+  universeScopes: string[]; // Renamed from universeTags
+  createdAt: number;
+  updatedAt: number;
+  canonical: true; // Must always be true for saved terms
+  linksTo?: string[]; // Optional for now
 }
 
+// Milestone 5: Pending Term
 export interface PendingTerm {
-    id: ID;
-    term: string;
-    sourceNoteId?: string;
-    detectedAt: number;
-    tags?: string[];
+  schemaVersion: number;
+  pendingId: ID;
+  proposedName: string;
+  detectedInNoteIds: string[];
+  detectedSnippets: string[];
+  reason: string; 
+  createdAt: number;
 }
 
-export interface GlossaryExtractionItem {
-  id: ID;
-  raw_term: string;
-  found_in_note_id: ID;
-  context_snippet: string;
-  created_at: ISODate;
+// Milestone 5: Glossary Index
+export interface GlossaryIndex {
+    schemaVersion: number;
+    updatedAt: number;
+    lookup: Record<string, string>; // normalizedKey -> termId
+    terms: Record<string, {
+        primaryName: string;
+        aliases: string[];
+        universeScopes: string[];
+        createdAt: number;
+        updatedAt: number;
+        canonical: true;
+    }>;
+    pending?: { count: number, ids: string[] };
+}
+
+// Milestone 5 Step 7: Occurrence Tracking
+export interface GlossaryOccurrences {
+  schemaVersion: number;
+  updatedAt: number;
+  terms: Record<string, { // termId
+    noteIds: string[];
+    snippetsByNote: Record<string, string[]>; // noteId -> snippets
+    lastSeenAtByNote: Record<string, number>; // noteId -> timestamp
+  }>;
 }
 
 export interface Notification {

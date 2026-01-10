@@ -1,6 +1,7 @@
 import React from 'react';
 import { GlossaryTab, Workspace, GlossaryTerm } from '../types';
 import { Search, Book } from 'lucide-react';
+import { noteContentToPlainText } from '../services/vaultService';
 
 interface GlossaryViewProps {
     tab: GlossaryTab;
@@ -12,10 +13,10 @@ const GlossaryView: React.FC<GlossaryViewProps> = ({ tab, workspace, onUpdateSta
     const { search } = tab.state;
 
     const terms = (Object.values(workspace.glossary.terms) as GlossaryTerm[]).sort((a, b) => 
-        a.term.localeCompare(b.term)
+        a.primaryName.localeCompare(b.primaryName)
     );
 
-    const filtered = terms.filter(t => t.term.toLowerCase().includes(search.toLowerCase()));
+    const filtered = terms.filter(t => t.primaryName.toLowerCase().includes(search.toLowerCase()));
 
     return (
         <div className="flex flex-col h-full bg-deep-space text-foreground">
@@ -43,16 +44,19 @@ const GlossaryView: React.FC<GlossaryViewProps> = ({ tab, workspace, onUpdateSta
                         {terms.length === 0 ? "No terms in glossary." : "No matches found."}
                     </div>
                 ) : (
-                    filtered.map(term => (
-                        <div key={term.id} className="p-3 bg-surface/30 border border-chrome-border rounded hover:border-accent/50 transition-colors cursor-pointer group">
-                            <div className="flex items-baseline justify-between">
-                                <span className="font-bold text-foreground group-hover:text-accent transition-colors">{term.term}</span>
+                    filtered.map(term => {
+                        const plainDef = noteContentToPlainText({ content: term.definitionRichText });
+                        return (
+                            <div key={term.termId} className="p-3 bg-surface/30 border border-chrome-border rounded hover:border-accent/50 transition-colors cursor-pointer group">
+                                <div className="flex items-baseline justify-between">
+                                    <span className="font-bold text-foreground group-hover:text-accent transition-colors">{term.primaryName}</span>
+                                </div>
+                                <div className="text-sm text-muted mt-1 leading-relaxed line-clamp-3">
+                                    {plainDef || "No definition."}
+                                </div>
                             </div>
-                            <div className="text-sm text-muted mt-1 leading-relaxed line-clamp-3">
-                                {term.definition_plain}
-                            </div>
-                        </div>
-                    ))
+                        );
+                    })
                 )}
             </div>
             

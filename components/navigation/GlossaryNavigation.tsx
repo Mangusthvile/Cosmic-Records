@@ -1,150 +1,225 @@
 
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Workspace, GlossaryTerm, PendingTerm } from '../../types';
-import { Plus, Search, Book, Check, X, Filter } from 'lucide-react';
-import { IconButton, Input, Badge } from '../ui/Primitives';
-import { glossaryService } from '../../services/glossaryService';
+import { Plus, Search, Book, Check, X, Filter, ChevronDown, ChevronRight, Clock, Tag } from 'lucide-react';
+import { IconButton, Input, Badge, Button, Separator } from '../ui/Primitives';
+import { createBlankGlossaryTerm } from '../../services/storageService';
 
 interface GlossaryNavigationProps {
     workspace: Workspace;
     onUpdateWorkspace: (ws: Workspace) => void;
     onOpenTerm: (termId: string) => void;
+    onOpenPending: (pendingId: string) => void;
+    state?: any;
+    onStateChange?: (partial: any) => void;
 }
 
-const GlossaryNavigation: React.FC<GlossaryNavigationProps> = ({ workspace, onUpdateWorkspace, onOpenTerm }) => {
-    const [search, setSearch] = useState('');
-    const [selectedUniverse, setSelectedUniverse] = useState<string | 'all'>('all');
-    
-    const terms = (Object.values(workspace.glossary.terms) as GlossaryTerm[]).sort((a, b) => a.term.localeCompare(b.term));
-    const pending = workspace.glossary.pending || [];
+const GlossaryNavigation: React.FC<GlossaryNavigationProps> = ({ 
+    workspace, onUpdateWorkspace, onOpenTerm, onOpenPending,
+    state, onStateChange 
+}) => {
+    // State persistence
+    const searchQuery = state?.searchQuery || '';
+    const selectedUniverses = state?.selectedUniverses || ([] as string[]);
+    const isPendingCollapsed = state?.isPendingCollapsed ?? false;
+    const isTermsCollapsed = state?.isTermsCollapsed ?? false;
 
-    const filtered = terms.filter(t => {
-        const matchesSearch = t.term.toLowerCase().includes(search.toLowerCase()) || t.aliases.some(a => a.toLowerCase().includes(search.toLowerCase()));
-        const matchesUniverse = selectedUniverse === 'all' || t.universeTags.includes(selectedUniverse);
-        return matchesSearch && matchesUniverse;
-    });
+    const updateState = (partial: any) => onStateChange && onStateChange(partial);
 
+    // Derived Data
+    // We rely on GlossaryIndex for performance, not full term objects
+    const indexTerms = workspace.glossary.index.terms;
+    const termIds = Object.keys(indexTerms);
+    const pendingTerms = Object.values(workspace.glossary.pending);
+    const availableUniverses = workspace.settings.universeTags.tags;
+    const occurrences = workspace.glossary.occurrences?.terms || {};
+
+    // Search & Filter Logic
+    const filteredTermIds = useMemo(() => {
+        const query = searchQuery.toLowerCase().trim();
+        return termIds.filter(id => {
+            const t = indexTerms[id];
+            
+            // Search Filter
+            const matchesSearch = !query || 
+                t.primaryName.toLowerCase().includes(query) || 
+                t.aliases.some(a => a.toLowerCase().includes(query));
+            
+            if (!matchesSearch) return false;
+
+            // Universe Filter (Intersection)
+            if (selectedUniverses.length > 0) {
+                const hasScope = t.universeScopes.some(scope => selectedUniverses.includes(scope));
+                // If term has no scopes, does it match "all"? Usually strict filter.
+                // If term has scopes, at least one must match selected.
+                if (!hasScope) return false;
+            }
+
+            return true;
+        }).sort((a, b) => indexTerms[a].primaryName.localeCompare(indexTerms[b].primaryName));
+    }, [searchQuery, selectedUniverses, indexTerms, termIds]);
+
+    const filteredPending = useMemo(() => {
+        const query = searchQuery.toLowerCase().trim();
+        return pendingTerms.filter(p => !query || p.proposedName.toLowerCase().includes(query));
+    }, [searchQuery, pendingTerms]);
+
+    // Handlers
     const handleCreateTerm = () => {
-        const termText = prompt("New Term:");
-        if (termText) {
-            const term = glossaryService.createTerm(workspace, termText);
-            onUpdateWorkspace({ ...workspace });
-            onOpenTerm(term.id);
-        }
-    };
-
-    const handleApprove = (p: PendingTerm) => {
-        const term = glossaryService.approvePending(workspace, p.id);
-        if (term) {
-            onUpdateWorkspace({ ...workspace });
-            onOpenTerm(term.id);
-        }
-    };
-
-    const handleIgnore = (p: PendingTerm) => {
-        glossaryService.ignorePending(workspace, p.id);
+        const id = createBlankGlossaryTerm(workspace);
         onUpdateWorkspace({ ...workspace });
+        onOpenTerm(id);
+    };
+
+    const toggleUniverseFilter = (tag: string) => {
+        const current = selectedUniverses;
+        const next = current.includes(tag) ? current.filter((t: string) => t !== tag) : [...current, tag];
+        updateState({ selectedUniverses: next });
     };
 
     return (
         <div className="flex flex-col h-full bg-panel">
             {/* Header */}
             <div className="h-10 flex-shrink-0 flex items-center justify-between px-2 border-b border-border bg-panel z-10">
+                <div className="flex items-center gap-2">
+                    <Book size={16} className="text-accent" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-text">Glossary</span>
+                </div>
                 <div className="flex items-center gap-1">
                     <IconButton size="sm" onClick={handleCreateTerm} title="New Term"><Plus size={16}/></IconButton>
                 </div>
-                <div className="text-[10px] font-bold uppercase tracking-widest text-text2">Glossary</div>
             </div>
 
             {/* Controls */}
-            <div className="border-b border-border bg-panel p-2 space-y-2">
+            <div className="border-b border-border bg-panel p-2 flex flex-col gap-2">
                 <div className="relative">
                     <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text2" />
                     <Input 
-                        className="pl-8 text-xs"
-                        placeholder="Filter terms..."
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
+                        className="pl-8 pr-8"
+                        placeholder="Search terms..."
+                        value={searchQuery}
+                        onChange={(e) => updateState({ searchQuery: e.target.value })}
                     />
-                </div>
-                {workspace.settings.universeTags.tags.length > 0 && (
-                    <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
-                        <span className="text-[10px] text-text2 uppercase font-bold whitespace-nowrap"><Filter size={10} className="inline mr-1"/>Tag:</span>
-                        <button 
-                            onClick={() => setSelectedUniverse('all')}
-                            className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${selectedUniverse === 'all' ? 'bg-accent/20 text-accent border-accent/30' : 'text-text2 border-border hover:bg-panel2'}`}
-                        >
-                            All
-                        </button>
-                        {workspace.settings.universeTags.tags.map(tag => (
-                            <button 
-                                key={tag}
-                                onClick={() => setSelectedUniverse(tag)}
-                                className={`text-[10px] px-2 py-0.5 rounded-full border whitespace-nowrap ${selectedUniverse === tag ? 'bg-accent/20 text-accent border-accent/30' : 'text-text2 border-border hover:bg-panel2'}`}
-                            >
-                                {tag}
-                            </button>
-                        ))}
-                    </div>
-                )}
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-2 space-y-4">
-                
-                {/* Pending Section */}
-                {pending.length > 0 && (
-                    <div className="space-y-1">
-                        <div className="px-2 py-1 text-[10px] font-bold uppercase text-warning tracking-widest flex items-center justify-between">
-                            <span>Pending Review ({pending.length})</span>
-                        </div>
-                        {pending.map(p => (
-                            <div key={p.id} className="p-2 bg-warning/5 border border-warning/20 rounded flex flex-col gap-1">
-                                <div className="font-bold text-xs text-text">{p.term}</div>
-                                {p.sourceNoteId && (
-                                    <div className="text-[10px] text-text2 truncate">
-                                        Detected in: <span className="text-accent">{workspace.notes[p.sourceNoteId]?.title || 'Unknown'}</span>
-                                    </div>
-                                )}
-                                <div className="flex gap-2 mt-1">
-                                    <button onClick={() => handleApprove(p)} className="flex-1 flex items-center justify-center gap-1 bg-panel border border-border hover:bg-success/10 hover:border-success/30 hover:text-success py-1 rounded text-[10px] transition-colors">
-                                        <Check size={10} /> Approve
-                                    </button>
-                                    <button onClick={() => handleIgnore(p)} className="flex-1 flex items-center justify-center gap-1 bg-panel border border-border hover:bg-panel2 hover:text-text2 py-1 rounded text-[10px] transition-colors">
-                                        <X size={10} /> Ignore
-                                    </button>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-
-                {/* Term List */}
-                <div className="space-y-0.5">
-                    {filtered.length === 0 ? (
-                        <div className="p-4 text-center text-xs text-text2 italic">No terms found.</div>
-                    ) : (
-                        filtered.map(term => (
-                            <div 
-                                key={term.id}
-                                onClick={() => onOpenTerm(term.id)}
-                                className="px-3 py-2 rounded cursor-pointer hover:bg-panel2 text-text transition-colors border border-transparent hover:border-border group"
-                            >
-                                <div className="flex items-center gap-2">
-                                    <Book size={12} className="text-accent opacity-50 group-hover:opacity-100" />
-                                    <span className="text-xs font-bold">{term.term}</span>
-                                    {term.aliases.length > 0 && <span className="text-[9px] text-text2 bg-panel px-1 rounded opacity-50">+{term.aliases.length}</span>}
-                                </div>
-                                {term.universeTags.length > 0 && (
-                                    <div className="flex gap-1 mt-1 pl-5">
-                                        {term.universeTags.map(t => (
-                                            <span key={t} className="text-[9px] px-1 rounded bg-panel border border-border text-text2">{t}</span>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        ))
+                    {searchQuery && (
+                        <button onClick={() => updateState({ searchQuery: '' })} className="absolute right-2 top-1/2 -translate-y-1/2 text-text2 hover:text-text"><X size={12} /></button>
                     )}
                 </div>
+                
+                {/* Universe Filters */}
+                <div className="flex flex-wrap gap-1">
+                    {availableUniverses.map(tag => (
+                        <button
+                            key={tag}
+                            onClick={() => toggleUniverseFilter(tag)}
+                            className={`px-2 py-0.5 text-[9px] rounded border transition-colors ${selectedUniverses.includes(tag) ? 'bg-accent/20 border-accent text-accent' : 'bg-panel2 border-transparent text-text2 hover:bg-surface'}`}
+                        >
+                            {tag}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            {/* List Content */}
+            <div className="flex-1 overflow-y-auto custom-scrollbar">
+                
+                {/* Pending Section */}
+                <div className="flex flex-col border-b border-border/50">
+                    <button 
+                        onClick={() => updateState({ isPendingCollapsed: !isPendingCollapsed })}
+                        className="flex items-center justify-between px-3 py-2 bg-panel hover:bg-panel2 transition-colors select-none group"
+                    >
+                        <div className="flex items-center gap-2">
+                            <Clock size={12} className={pendingTerms.length > 0 ? "text-warning" : "text-text2"} />
+                            <span className="text-xs font-bold text-text2 group-hover:text-text">Pending</span>
+                            {pendingTerms.length > 0 && <Badge variant="warning">{pendingTerms.length}</Badge>}
+                        </div>
+                        {isPendingCollapsed ? <ChevronRight size={12} className="text-text2" /> : <ChevronDown size={12} className="text-text2" />}
+                    </button>
+                    
+                    {!isPendingCollapsed && (
+                        <div className="bg-panel2/30 pb-2">
+                            {filteredPending.length === 0 ? (
+                                <div className="px-4 py-2 text-[10px] text-text2 italic opacity-50">No pending items.</div>
+                            ) : (
+                                filteredPending.map(p => (
+                                    <div 
+                                        key={p.pendingId}
+                                        onClick={() => onOpenPending(p.pendingId)}
+                                        className="px-3 py-1.5 cursor-pointer hover:bg-panel2 border-l-2 border-transparent hover:border-warning flex flex-col gap-0.5"
+                                    >
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-xs font-medium text-text">{p.proposedName}</span>
+                                            <span className="text-[9px] uppercase tracking-wide text-text2 opacity-70">{p.reason}</span>
+                                        </div>
+                                        {p.detectedInNoteIds.length > 0 && (
+                                            <div className="text-[9px] text-text2 truncate opacity-50">
+                                                from: {workspace.notes[p.detectedInNoteIds[0]]?.title || 'Unknown'}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    )}
+                </div>
+
+                {/* Terms Section */}
+                <div className="flex flex-col">
+                    <button 
+                        onClick={() => updateState({ isTermsCollapsed: !isTermsCollapsed })}
+                        className="flex items-center justify-between px-3 py-2 bg-panel hover:bg-panel2 transition-colors select-none group"
+                    >
+                        <div className="flex items-center gap-2">
+                            <Tag size={12} className="text-accent" />
+                            <span className="text-xs font-bold text-text2 group-hover:text-text">All Terms</span>
+                            <span className="text-[10px] text-text2 opacity-50">({filteredTermIds.length})</span>
+                        </div>
+                        {isTermsCollapsed ? <ChevronRight size={12} className="text-text2" /> : <ChevronDown size={12} className="text-text2" />}
+                    </button>
+
+                    {!isTermsCollapsed && (
+                        <div>
+                            {filteredTermIds.length === 0 ? (
+                                <div className="px-4 py-4 text-center text-xs text-text2 italic">No terms match filters.</div>
+                            ) : (
+                                filteredTermIds.map(id => {
+                                    const t = indexTerms[id];
+                                    const occurrenceCount = occurrences[id]?.noteIds?.length || 0;
+                                    
+                                    return (
+                                        <div 
+                                            key={id}
+                                            onClick={() => onOpenTerm(id)}
+                                            className="px-3 py-1.5 cursor-pointer hover:bg-panel2 border-l-2 border-transparent hover:border-accent flex items-center justify-between group"
+                                        >
+                                            <div className="min-w-0">
+                                                <div className="text-xs font-medium text-text truncate group-hover:text-accent transition-colors">{t.primaryName}</div>
+                                                <div className="flex gap-1 mt-0.5">
+                                                    {t.universeScopes.map(scope => (
+                                                        <span key={scope} className="text-[9px] text-text2 bg-surface px-1 rounded">{scope}</span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-1">
+                                                {occurrenceCount > 0 && (
+                                                    <span className="text-[9px] text-text2 font-mono bg-surface border border-border px-1 rounded opacity-50 group-hover:opacity-100" title={`${occurrenceCount} mentions`}>
+                                                        {occurrenceCount}
+                                                    </span>
+                                                )}
+                                                {t.aliases.length > 0 && (
+                                                    <span className="text-[9px] text-text2 bg-panel2 border border-border px-1 rounded opacity-50 group-hover:opacity-100" title={`${t.aliases.length} aliases`}>
+                                                        +{t.aliases.length}
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                    )}
+                </div>
+
             </div>
         </div>
     );

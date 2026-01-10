@@ -1,13 +1,18 @@
 
 import { 
   Workspace, Note, NoteType, NoteStatus, 
-  ID, UserPreferences, GlossaryTerm, UniverseTag, Folder, Collection,
+  ID, UserPreferences, GlossaryTerm, PendingTerm, Folder, Collection,
   NotificationLogItem,
   CollectionsData,
   MapData
 } from "../types";
 import { parseWikiLinks, extractLinkTitles, extractOutboundLinks } from "./linkService";
 import { vaultService, noteContentToPlainText } from "./vaultService";
+import { extractCandidateTerms, scanTextForGlossaryTerms } from "./termDetection";
+
+export const normalizeKey = (str: string): string => {
+    return str.trim().toLowerCase().replace(/\s+/g, ' ').replace(/[^\w\s-]/g, ''); // Trim, lower, collapse space, simple punctuation remove
+};
 
 const generateId = (): string => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -22,7 +27,8 @@ const generateId = (): string => {
 const createDefaultPreferences = (): UserPreferences => ({
   ai: { proactive: true, allow_auto_edits: false, remember_preferences: true },
   tts: { mode: "selected_text_only" },
-  ui: { gray_out_outdated_titles: true, show_badges_in_search: true, show_unresolved_prominently: true }
+  ui: { gray_out_outdated_titles: true, show_badges_in_search: true, show_unresolved_prominently: true },
+  widgets: { autoOpenRecommended: true }
 });
 
 export const logNotification = (
@@ -200,6 +206,59 @@ export const createNote = (
     return note;
 };
 
+// Update Occurrences based on note content (Milestone 5 Step 7)
+export const updateOccurrencesForNote = (workspace: Workspace, note: Note) => {
+    if (!note.content_plain) return;
+    
+    const scanResults = scanTextForGlossaryTerms(note.content_plain, workspace.glossary.index.lookup);
+    const foundTermIds = new Set(scanResults.keys());
+    const occurrences = workspace.glossary.occurrences;
+    const now = Date.now();
+
+    // 1. Remove this note from terms that no longer contain it
+    Object.keys(occurrences.terms).forEach(termId => {
+        const termData = occurrences.terms[termId];
+        if (termData.noteIds.includes(note.id) && !foundTermIds.has(termId)) {
+            termData.noteIds = termData.noteIds.filter(id => id !== note.id);
+            if (termData.snippetsByNote) delete termData.snippetsByNote[note.id];
+            if (termData.lastSeenAtByNote) delete termData.lastSeenAtByNote[note.id];
+        }
+    });
+
+    // 2. Add/Update for found terms
+    scanResults.forEach((snippets, termId) => {
+        if (!occurrences.terms[termId]) {
+            occurrences.terms[termId] = {
+                noteIds: [],
+                snippetsByNote: {},
+                lastSeenAtByNote: {}
+            };
+        }
+        const termData = occurrences.terms[termId];
+        
+        // Add ID if missing
+        if (!termData.noteIds.includes(note.id)) {
+            termData.noteIds.push(note.id);
+            if (termData.noteIds.length > 200) {
+                const removedId = termData.noteIds.shift();
+                if (removedId) {
+                    delete termData.snippetsByNote[removedId];
+                    delete termData.lastSeenAtByNote[removedId];
+                }
+            }
+        }
+
+        // Update Metadata
+        termData.snippetsByNote[note.id] = snippets;
+        termData.lastSeenAtByNote[note.id] = now;
+    });
+
+    occurrences.updatedAt = now;
+    
+    // Trigger Save
+    vaultService.debouncedSaveOccurrences(occurrences);
+};
+
 export const updateNote = (workspace: Workspace, note: Note): Workspace => {
     const oldNote = workspace.notes[note.id];
     
@@ -230,6 +289,8 @@ export const updateNote = (workspace: Workspace, note: Note): Workspace => {
     updateLinkGraph(workspace, note);
     workspace.notes[note.id] = note;
     scanContentAndCreateUnresolved(workspace, note.id);
+    
+    updateOccurrencesForNote(workspace, note);
 
     return { ...workspace };
 };
@@ -385,6 +446,273 @@ export const createMap = (workspace: Workspace, name: string): ID => {
     return id;
 };
 
+// --- Glossary Management (Milestone 5) ---
+
+export const lookupGlossaryTermId = (workspace: Workspace, text: string): string | null => {
+    const normalized = normalizeKey(text);
+    if (!normalized) return null;
+    
+    // Check Exact Match in index lookup
+    // The index lookup should ideally contain both primary and aliases normalized.
+    // If multiple entries map to same normalized key, primary wins if we built the index correctly.
+    // Assuming workspace.glossary.index.lookup is populated properly.
+    return workspace.glossary.index.lookup[normalized] || null;
+};
+
+export const validateGlossaryTerm = (workspace: Workspace, term: GlossaryTerm): string | null => {
+    const index = workspace.glossary.index;
+    
+    // Check Primary Name Collision
+    const normPrimary = normalizeKey(term.primaryName);
+    if (!normPrimary) return "Primary name cannot be empty.";
+    
+    const existingId = index.lookup[normPrimary];
+    if (existingId && existingId !== term.termId) {
+        const conflict = workspace.glossary.terms[existingId]?.primaryName || "Unknown Term";
+        return `Name "${term.primaryName}" conflicts with existing term "${conflict}".`;
+    }
+
+    // Check Alias Collisions
+    for (const alias of term.aliases) {
+        const normAlias = normalizeKey(alias);
+        const aliasId = index.lookup[normAlias];
+        if (aliasId && aliasId !== term.termId) {
+            const conflict = workspace.glossary.terms[aliasId]?.primaryName || "Unknown Term";
+            return `Alias "${alias}" conflicts with existing term "${conflict}".`;
+        }
+    }
+
+    return null;
+};
+
+export const createGlossaryTerm = (workspace: Workspace, name: string, definitionInput?: string, universeScopes: string[] = []): ID => {
+    const termId = generateId();
+    const now = Date.now();
+    
+    // Uniqueness check
+    const normalized = normalizeKey(name);
+    if (!normalized) return "";
+
+    if (workspace.glossary.index.lookup[normalized]) {
+        logNotification(workspace, 'warning', `Term "${name}" already exists.`);
+        return workspace.glossary.index.lookup[normalized];
+    }
+
+    // Default definition structure
+    const def = definitionInput ? {
+        type: 'doc',
+        content: [{ type: 'paragraph', content: [{ type: 'text', text: definitionInput }] }]
+    } : { type: 'doc', content: [] };
+
+    // GUARDRAIL: Strict canonical enforcement
+    const term: GlossaryTerm = {
+        schemaVersion: 1,
+        termId,
+        primaryName: name,
+        aliases: [],
+        definitionRichText: def,
+        universeScopes: universeScopes,
+        createdAt: now,
+        updatedAt: now,
+        canonical: true // Always enforced
+    };
+
+    // Update Memory
+    workspace.glossary.terms[termId] = term;
+    workspace.glossary.index.lookup[normalized] = termId;
+    workspace.glossary.index.terms[termId] = {
+        primaryName: term.primaryName,
+        aliases: term.aliases,
+        universeScopes: term.universeScopes,
+        createdAt: term.createdAt,
+        updatedAt: term.updatedAt,
+        canonical: true
+    };
+
+    // Update Persistence
+    vaultService.saveGlossaryTerm(term);
+    vaultService.saveGlossaryIndex(workspace.glossary.index);
+    logNotification(workspace, 'success', `Created canon glossary term: ${name}`, termId);
+    
+    return termId;
+};
+
+export const createBlankGlossaryTerm = (workspace: Workspace): string => {
+    const id = generateId();
+    const name = `Untitled Term ${id.slice(0, 4)}`;
+    return createGlossaryTerm(workspace, name);
+};
+
+export const updateGlossaryTerm = (workspace: Workspace, term: GlossaryTerm) => {
+    const oldTerm = workspace.glossary.terms[term.termId];
+    
+    // Validate first
+    const error = validateGlossaryTerm(workspace, term);
+    if (error) {
+        logNotification(workspace, 'warning', `Update failed: ${error}`);
+        return; 
+    }
+
+    // GUARDRAIL: Sanitize term to ensure it is always canonical and has no status
+    const safeTerm = { ...term };
+    delete (safeTerm as any).status; // Forbidden field
+    delete (safeTerm as any).unresolved; // Forbidden field
+    safeTerm.canonical = true; // Enforced
+
+    // 1. Remove OLD index entries
+    if (oldTerm) {
+        const oldKeys = [oldTerm.primaryName, ...oldTerm.aliases].map(normalizeKey);
+        oldKeys.forEach(k => delete workspace.glossary.index.lookup[k]);
+    }
+
+    // 2. Add NEW index entries
+    const newKeys = [safeTerm.primaryName, ...safeTerm.aliases].map(normalizeKey);
+    newKeys.forEach(key => {
+        workspace.glossary.index.lookup[key] = safeTerm.termId;
+    });
+
+    // 3. Update Term & Index Summary
+    safeTerm.updatedAt = Date.now();
+    workspace.glossary.terms[safeTerm.termId] = safeTerm;
+    workspace.glossary.index.terms[safeTerm.termId] = {
+        primaryName: safeTerm.primaryName,
+        aliases: safeTerm.aliases,
+        universeScopes: safeTerm.universeScopes,
+        createdAt: safeTerm.createdAt,
+        updatedAt: safeTerm.updatedAt,
+        canonical: true
+    };
+    workspace.glossary.index.updatedAt = Date.now();
+    
+    // 4. Persist
+    vaultService.saveGlossaryTerm(safeTerm);
+    vaultService.saveGlossaryIndex(workspace.glossary.index);
+};
+
+export const deleteGlossaryTerm = (workspace: Workspace, termId: string) => {
+    const term = workspace.glossary.terms[termId];
+    if (!term) return;
+
+    // Remove index entries
+    const keys = [term.primaryName, ...term.aliases].map(normalizeKey);
+    keys.forEach(k => {
+        if (workspace.glossary.index.lookup[k] === termId) {
+            delete workspace.glossary.index.lookup[k];
+        }
+    });
+    delete workspace.glossary.index.terms[termId];
+    workspace.glossary.index.updatedAt = Date.now();
+    
+    // Remove from memory
+    delete workspace.glossary.terms[termId];
+    
+    // Persist removal
+    vaultService.deleteGlossaryTerm(termId);
+    vaultService.saveGlossaryIndex(workspace.glossary.index);
+    logNotification(workspace, 'info', `Deleted glossary term: ${term.primaryName}`);
+};
+
+export const addPendingTerm = (workspace: Workspace, name: string, context?: { noteId: string, snippet: string }) => {
+    const normalized = normalizeKey(name);
+    if (workspace.glossary.index.lookup[normalized]) return; // Exists
+
+    // Check existing pending
+    const existingPending = Object.values(workspace.glossary.pending).find(p => normalizeKey(p.proposedName) === normalized);
+    
+    if (existingPending) {
+        if (context && !existingPending.detectedInNoteIds.includes(context.noteId)) {
+            existingPending.detectedInNoteIds.push(context.noteId);
+            existingPending.detectedSnippets.push(context.snippet);
+            vaultService.savePendingTerm(existingPending);
+        }
+        return;
+    }
+
+    const pendingId = generateId();
+    const pending: PendingTerm = {
+        schemaVersion: 1,
+        pendingId,
+        proposedName: name,
+        detectedInNoteIds: context ? [context.noteId] : [],
+        detectedSnippets: context ? [context.snippet] : [],
+        reason: 'manual',
+        createdAt: Date.now()
+    };
+
+    workspace.glossary.pending[pendingId] = pending;
+    vaultService.savePendingTerm(pending);
+    logNotification(workspace, 'info', `Added "${name}" to pending terms.`);
+};
+
+// Deterministic Scanning hook
+export const scanNoteForPending = (workspace: Workspace, note: Note) => {
+    if (!note.content_plain) return;
+    
+    // Defer to avoid blocking UI immediately on save
+    setTimeout(() => {
+        const candidates = extractCandidateTerms(note.content_plain || "");
+        
+        candidates.forEach(c => {
+            const norm = normalizeKey(c.term);
+            
+            // 1. Check if exists in Glossary
+            if (workspace.glossary.index.lookup[norm]) return;
+
+            // 2. Check if already pending (handled in addPendingTerm logic)
+            addPendingTerm(workspace, c.term, { noteId: note.id, snippet: c.context });
+        });
+    }, 1000);
+};
+
+export const approvePendingTerm = (workspace: Workspace, pendingId: string, termPayload?: Partial<GlossaryTerm>) => {
+    const pending = workspace.glossary.pending[pendingId];
+    if (!pending) return;
+
+    // Use current pending proposedName as base
+    const termId = createGlossaryTerm(workspace, pending.proposedName, undefined, termPayload?.universeScopes);
+    
+    // Apply extra payload if provided after creation
+    if (termPayload?.definitionRichText) {
+        const term = workspace.glossary.terms[termId];
+        updateGlossaryTerm(workspace, { ...term, definitionRichText: termPayload.definitionRichText });
+    }
+
+    delete workspace.glossary.pending[pendingId];
+    vaultService.deletePendingTerm(pendingId);
+    return termId;
+};
+
+export const mergePendingAsAlias = (workspace: Workspace, pendingId: string, targetTermId: string) => {
+    const pending = workspace.glossary.pending[pendingId];
+    const targetTerm = workspace.glossary.terms[targetTermId];
+    
+    if (!pending || !targetTerm) return;
+
+    const normalizedAlias = normalizeKey(pending.proposedName);
+    
+    // Check collision on other terms (skip target term check itself to allow idempotent merge if already there)
+    if (workspace.glossary.index.lookup[normalizedAlias] && workspace.glossary.index.lookup[normalizedAlias] !== targetTermId) {
+        logNotification(workspace, 'warning', `Cannot merge: "${pending.proposedName}" conflicts with another term.`);
+        return;
+    }
+
+    // Add Alias if new
+    if (!targetTerm.aliases.some(a => normalizeKey(a) === normalizedAlias) && normalizeKey(targetTerm.primaryName) !== normalizedAlias) {
+        targetTerm.aliases.push(pending.proposedName);
+        updateGlossaryTerm(workspace, targetTerm);
+    }
+
+    // Cleanup Pending
+    delete workspace.glossary.pending[pendingId];
+    vaultService.deletePendingTerm(pendingId);
+    logNotification(workspace, 'success', `Merged "${pending.proposedName}" into "${targetTerm.primaryName}".`);
+};
+
+export const ignorePendingTerm = (workspace: Workspace, pendingId: string) => {
+    delete workspace.glossary.pending[pendingId];
+    vaultService.deletePendingTerm(pendingId);
+};
+
 // --- Misc ---
 
 export const togglePin = (workspace: Workspace, noteId: string) => {
@@ -407,22 +735,4 @@ export const clearUnresolvedOrigins = (workspace: Workspace, noteId: string) => 
         vaultService.onNoteChange(note); 
         logNotification(workspace, 'info', `Cleared origins for note: ${note.title}`, noteId);
     }
-};
-
-export const createGlossaryTerm = (workspace: Workspace, term: string, definition: string): ID => {
-    const id = generateId();
-    workspace.glossary.terms[id] = {
-        id,
-        term,
-        aliases: [],
-        definitionDoc: { type: "doc", content: [] },
-        definition_plain: definition,
-        linksTo: [],
-        universeTags: [],
-        sourceRefs: [],
-        isCanon: true,
-        createdAt: Date.now(),
-        updatedAt: Date.now()
-    };
-    return id;
 };

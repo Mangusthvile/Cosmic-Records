@@ -180,5 +180,3 @@ export const CollapsibleContent = Node.create({
         return ['div', mergeAttributes(HTMLAttributes, { class: 'collapsible-content' }), 0];
     },
 });
-
-export { GlossaryLink } from './GlossaryLink';
