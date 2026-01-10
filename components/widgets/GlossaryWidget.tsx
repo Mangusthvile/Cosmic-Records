@@ -1,18 +1,17 @@
-import React, { useState } from 'react';
+
+import React from 'react';
 import { Workspace, GlossaryTerm } from '../../types';
-import { Search, Book, Plus } from 'lucide-react';
+import { Search, Book } from 'lucide-react';
 import { createGlossaryTerm } from '../../services/storageService';
+import { WidgetProps } from './WidgetRegistry';
 
-interface GlossaryWidgetProps {
-    workspace: Workspace;
-    onUpdateWorkspace: (ws: Workspace) => void;
-}
+const GlossaryWidget: React.FC<WidgetProps> = ({ workspace, onUpdateWorkspace, state, onStateChange }) => {
+    const search = state?.search || '';
+    const definitionInput = state?.definitionInput || '';
+    const termInput = state?.termInput || '';
+    const view = state?.view || 'search'; // 'search' | 'define'
 
-const GlossaryWidget: React.FC<GlossaryWidgetProps> = ({ workspace, onUpdateWorkspace }) => {
-    const [search, setSearch] = useState('');
-    const [definitionInput, setDefinitionInput] = useState('');
-    const [termInput, setTermInput] = useState('');
-    const [view, setView] = useState<'search' | 'define'>('search');
+    const updateState = (partial: any) => onStateChange({ ...state, ...partial });
 
     const terms = (Object.values(workspace.glossary.terms) as GlossaryTerm[]);
     const filtered = terms.filter(t => t.term.toLowerCase().includes(search.toLowerCase()));
@@ -21,10 +20,13 @@ const GlossaryWidget: React.FC<GlossaryWidgetProps> = ({ workspace, onUpdateWork
         if (!termInput || !definitionInput) return;
         createGlossaryTerm(workspace, termInput, definitionInput);
         onUpdateWorkspace({ ...workspace }); // Trigger save/render
-        setTermInput('');
-        setDefinitionInput('');
-        setView('search');
-        setSearch(termInput); // Show the new term
+        
+        updateState({
+            termInput: '',
+            definitionInput: '',
+            view: 'search',
+            search: termInput
+        });
     };
 
     return (
@@ -32,13 +34,13 @@ const GlossaryWidget: React.FC<GlossaryWidgetProps> = ({ workspace, onUpdateWork
             {/* Toggle Header */}
             <div className="flex border-b border-border text-[10px] font-bold uppercase tracking-widest">
                 <button 
-                    onClick={() => setView('search')}
+                    onClick={() => updateState({ view: 'search' })}
                     className={`flex-1 py-2 hover:bg-surface transition-colors ${view === 'search' ? 'text-accent border-b-2 border-accent' : 'text-muted'}`}
                 >
                     Search
                 </button>
                 <button 
-                    onClick={() => setView('define')}
+                    onClick={() => updateState({ view: 'define' })}
                     className={`flex-1 py-2 hover:bg-surface transition-colors ${view === 'define' ? 'text-accent border-b-2 border-accent' : 'text-muted'}`}
                 >
                     Define
@@ -54,7 +56,7 @@ const GlossaryWidget: React.FC<GlossaryWidgetProps> = ({ workspace, onUpdateWork
                                 className="w-full bg-surface border border-border rounded pl-7 pr-2 py-1 text-xs focus:outline-none focus:border-accent"
                                 placeholder="Search terms..."
                                 value={search}
-                                onChange={(e) => setSearch(e.target.value)}
+                                onChange={(e) => updateState({ search: e.target.value })}
                             />
                         </div>
                     </div>
@@ -78,7 +80,7 @@ const GlossaryWidget: React.FC<GlossaryWidgetProps> = ({ workspace, onUpdateWork
                         <input 
                             className="w-full bg-surface border border-border rounded px-2 py-1 text-xs focus:outline-none focus:border-accent"
                             value={termInput}
-                            onChange={(e) => setTermInput(e.target.value)}
+                            onChange={(e) => updateState({ termInput: e.target.value })}
                             placeholder="e.g. Warp Drive"
                         />
                     </div>
@@ -87,7 +89,7 @@ const GlossaryWidget: React.FC<GlossaryWidgetProps> = ({ workspace, onUpdateWork
                          <textarea 
                             className="w-full h-full min-h-[100px] bg-surface border border-border rounded px-2 py-1 text-xs focus:outline-none focus:border-accent resize-none"
                             value={definitionInput}
-                            onChange={(e) => setDefinitionInput(e.target.value)}
+                            onChange={(e) => updateState({ definitionInput: e.target.value })}
                             placeholder="Describe the term..."
                         />
                     </div>

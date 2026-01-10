@@ -14,7 +14,7 @@ export type TemplateID = ID;
 export type MapNodeID = ID;
 export type NotificationID = ID;
 
-export type WidgetId = 'outline' | 'backlinks' | 'glossary' | 'ai_chat' | 'notifications';
+export type WidgetId = 'outline' | 'backlinks' | 'glossary' | 'ai_chat' | 'notifications' | 'dice' | 'coinflip';
 
 export interface UserPreferences {
   ai: { proactive: boolean; allow_auto_edits: boolean; remember_preferences: boolean };
@@ -202,60 +202,72 @@ export interface SearchFilters {
 }
 
 // --- PANE SYSTEM TYPES ---
-export type PaneLayout = 'single' | 'splitVertical' | 'splitHorizontal' | 'grid';
+export type PaneLayout = 'single' | 'splitVertical' | 'splitHorizontal' | 'quad';
 export type PaneId = 'paneA' | 'paneB' | 'paneC' | 'paneD';
 
-export type TabKind = 'note' | 'starmap' | 'glossary' | 'missing';
+export type ViewType = 'note' | 'starmap' | 'glossary' | 'missing' | 'search';
 
-export interface TabBase {
+export interface ViewRef {
   id: string; 
-  kind: TabKind;
+  kind: ViewType;
   title: string;
   icon?: string;
   version: number;
   lastActiveAt?: ISODate;
 }
 
-export interface NoteTabState {
+export interface NoteViewState {
   readMode: boolean;
   scrollY?: number;
 }
-export interface NoteTab extends TabBase {
+export interface NoteTab extends ViewRef {
   kind: 'note';
   payload: {
     noteId: string;
   };
-  state: NoteTabState;
+  state: NoteViewState;
 }
 
-export interface StarMapTabState {
+export interface StarMapViewState {
   zoom: number;
   panX: number;
   panY: number;
   selectedNodeId: string | null;
 }
-export interface StarMapTab extends TabBase {
+export interface StarMapTab extends ViewRef {
   kind: 'starmap';
   payload: {
     mapId: string | "main";
   };
-  state: StarMapTabState;
+  state: StarMapViewState;
 }
 
-export interface GlossaryTabState {
+export interface GlossaryViewState {
   search: string;
   selectedTermId: string | null;
   scrollY: number;
 }
-export interface GlossaryTab extends TabBase {
+export interface GlossaryTab extends ViewRef {
   kind: 'glossary';
   payload: {
     scope: "all";
   };
-  state: GlossaryTabState;
+  state: GlossaryViewState;
 }
 
-export interface MissingTab extends TabBase {
+export interface SearchResultsViewState {
+    scrollY: number;
+}
+export interface SearchResultsTab extends ViewRef {
+    kind: 'search';
+    payload: {
+        query: string;
+        filters: SearchFilters;
+    };
+    state: SearchResultsViewState;
+}
+
+export interface MissingTab extends ViewRef {
   kind: 'missing';
   payload: {
     originalKind: string;
@@ -265,7 +277,7 @@ export interface MissingTab extends TabBase {
   state: any;
 }
 
-export type Tab = NoteTab | StarMapTab | GlossaryTab | MissingTab;
+export type Tab = NoteTab | StarMapTab | GlossaryTab | SearchResultsTab | MissingTab;
 
 export interface PaneState {
   id: PaneId;
@@ -278,9 +290,12 @@ export interface PaneSystemState {
   layout: PaneLayout;
   focusedPaneId: PaneId;
   panes: Record<PaneId, PaneState>;
+  paneOrder: PaneId[]; // Explicit order for deterministic layout
 }
 
 // --- UI PERSISTENCE TYPES ---
+
+export type AppMode = 'notes' | 'starmap' | 'glossary';
 
 export interface SidebarState {
     navWidth: number;
@@ -289,18 +304,25 @@ export interface SidebarState {
     widgetCollapsed: boolean;
 }
 
-export interface NavigationState {
+export interface NotesNavigationState {
     selectedSection: string | null; 
     folderOpenState: Record<string, boolean>;
-    searchState?: {
+    searchState: {
         query: string;
         filters: SearchFilters;
         isFiltersOpen: boolean;
     };
 }
 
+export interface NavigationState {
+    activeMode: AppMode;
+    notes: NotesNavigationState;
+    starmap?: any;
+    glossary?: any;
+}
+
 export interface WidgetSystemState {
-    openWidgetIds: string[];
+    openWidgetIds: WidgetId[];
     widgetStates: Record<string, any>; 
 }
 

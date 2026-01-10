@@ -3,7 +3,8 @@ import {
   Workspace, Note, NoteType, NoteStatus, 
   ID, UserPreferences, GlossaryTerm, UniverseTag, Folder, Collection,
   NotificationLogItem,
-  CollectionsData
+  CollectionsData,
+  MapData
 } from "../types";
 import { parseWikiLinks, extractLinkTitles, extractOutboundLinks } from "./linkService";
 import { vaultService, noteContentToPlainText } from "./vaultService";
@@ -364,6 +365,24 @@ export const removeFromCollection = (workspace: Workspace, collectionId: string,
             collections: workspace.collections 
         });
     }
+};
+
+// --- Maps Management ---
+
+export const createMap = (workspace: Workspace, name: string): ID => {
+    const id = generateId();
+    const map: MapData = {
+        mapId: id,
+        name,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        viewState: { zoom: 1, panX: 0, panY: 0 },
+        nodes: [],
+        areas: []
+    };
+    workspace.maps.maps[id] = map;
+    vaultService.debouncedSaveMaps(workspace.maps);
+    return id;
 };
 
 // --- Misc ---

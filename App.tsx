@@ -1,14 +1,23 @@
 
-import React, { useState, useEffect, useRef } from 'react';
-import { Note, Workspace, PaneState, PaneId, UIState, MissingTab, NoteTab, SidebarState, NavigationState, WidgetSystemState, NotificationLogItem, SearchFilters } from './types';
-import { createNote, updateNote, logNotification } from './services/storageService'; 
+import React, { useState, useEffect } from 'react';
+import { Note, Workspace, PaneState, PaneId, UIState, MissingTab, NoteTab, SidebarState, NavigationState, WidgetSystemState, SearchFilters } from './types';
+import { createNote, updateNote, logNotification, createMap, createGlossaryTerm } from './services/storageService'; 
 import { vaultService } from './services/vaultService';
 import { generateTitle } from './services/geminiService';
-import Layout from './components/Layout';
+import AppShell from './components/Layout'; // Imported as Layout but it's the shell
 import { usePaneSystem } from './hooks/usePaneSystem';
+import { useHotkeys } from './hooks/useHotkeys'; 
 import { PaneGrid } from './components/PaneSystem';
 import NoteCreationModal from './components/NoteCreationModal';
 import VaultPicker from './components/VaultPicker';
+import SettingsModal from './components/SettingsModal';
+import DevInvariantChecker from './components/DevInvariantChecker';
+
+// Navigation Components
+import NotesNavigation from './components/navigation/NotesNavigation';
+import StarMapNavigation from './components/navigation/StarMapNavigation';
+import GlossaryNavigation from './components/navigation/GlossaryNavigation';
+import WidgetBar from './components/WidgetBar';
 
 type VaultState = 'initializing' | 'no-vault' | 'active';
 
@@ -16,6 +25,7 @@ const DEFAULT_SIDEBAR_STATE: SidebarState = { navWidth: 300, navCollapsed: false
 
 const DEFAULT_SEARCH_FILTERS: SearchFilters = {
     folderId: 'all',
+    collectionId: 'all',
     includeSubfolders: true,
     universeTagId: 'all',
     type: 'all',
@@ -24,12 +34,15 @@ const DEFAULT_SEARCH_FILTERS: SearchFilters = {
 };
 
 const DEFAULT_NAV_STATE: NavigationState = { 
-    selectedSection: null, 
-    folderOpenState: {},
-    searchState: {
-        query: '',
-        filters: DEFAULT_SEARCH_FILTERS,
-        isFiltersOpen: false
+    activeMode: 'notes',
+    notes: {
+        selectedSection: null, 
+        folderOpenState: {},
+        searchState: {
+            query: '',
+            filters: DEFAULT_SEARCH_FILTERS,
+            isFiltersOpen: false
+        }
     }
 };
 
@@ -39,199 +52,36 @@ const App: React.FC = () => {
   const [vaultState, setVaultState] = useState<VaultState>('initializing');
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   
-  // -- UI State Containers --
+  // -- UI State --
   const [sidebarState, setSidebarState] = useState<SidebarState>(DEFAULT_SIDEBAR_STATE);
   const [navState, setNavState] = useState<NavigationState>(DEFAULT_NAV_STATE);
   const [widgetState, setWidgetState] = useState<WidgetSystemState>(DEFAULT_WIDGET_STATE);
   
   const [isCreationModalOpen, setIsCreationModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [creationTargetFolderId, setCreationTargetFolderId] = useState<string>('inbox');
+  
+  // -- Hooks --
   const paneSystem = usePaneSystem();
 
-  // --- Vault Initialization & Restore ---
-  useEffect(() => {
-      const init = async () => {
-          const status = await vaultService.initialize();
-          if (status === 'active') {
-              try {
-                  const ws = await vaultService.loadWorkspace();
-                  const uiState = await vaultService.loadUIState();
-                  
-                  if (uiState) {
-                      let missingCount = 0;
-                      Object.values(uiState.paneSystem.panes).forEach((pane: PaneState) => {
-                          pane.tabs = pane.tabs.map(tab => {
-                              if (tab.kind === 'note') {
-                                  const noteTab = tab as NoteTab;
-                                  const note = ws.notes[noteTab.payload.noteId];
-                                  if (note) {
-                                      return { ...tab, title: note.title };
-                                  } else {
-                                      missingCount++;
-                                      logNotification(ws, 'warning', `Restored workspace referenced missing note: ${tab.title || noteTab.payload.noteId}`, undefined);
-                                      return {
-                                          ...tab,
-                                          kind: 'missing',
-                                          title: 'Missing: ' + tab.title,
-                                          payload: {
-                                              originalKind: 'note',
-                                              originalId: noteTab.payload.noteId,
-                                              lastKnownTitle: tab.title
-                                          }
-                                      } as MissingTab;
-                                  }
-                              }
-                              return tab;
-                          });
-                      });
-
-                      paneSystem.restoreState(uiState.paneSystem);
-                      setSidebarState(uiState.layout || DEFAULT_SIDEBAR_STATE);
-                      
-                      // Merge nav state to ensure new properties like searchState exist
-                      setNavState({ ...DEFAULT_NAV_STATE, ...(uiState.navigation || {}) });
-                      
-                      setWidgetState(uiState.widgets || DEFAULT_WIDGET_STATE);
-
-                      if (missingCount > 0) {
-                          vaultService.onWorkspaceChange(ws); 
-                      }
-                  } else {
-                      const notes = (Object.values(ws.notes) as Note[]).sort((a, b) => b.updatedAt - a.updatedAt);
-                      if (notes.length > 0) {
-                          paneSystem.openNoteTab(notes[0].id, notes[0].title);
-                      } else {
-                          paneSystem.openStarMapTab();
-                      }
-                  }
-
-                  setWorkspace(ws);
-                  setVaultState('active');
-              } catch (e) {
-                  console.error("Failed to load vault workspace", e);
-                  setVaultState('no-vault');
-              }
-          } else {
-              setVaultState('no-vault');
-          }
-      };
-      init();
-  }, []);
-
-  // --- Persistence: UI State ---
-  useEffect(() => {
-      if (vaultState === 'active' && workspace) {
-          const currentUIState: UIState = {
-              schemaVersion: 1,
-              savedAt: Date.now(),
-              paneSystem: paneSystem.state,
-              layout: sidebarState,
-              navigation: navState,
-              widgets: widgetState
-          };
-          vaultService.debouncedSaveUIState(currentUIState);
-      }
-  }, [paneSystem.state, sidebarState, navState, widgetState, vaultState, workspace]);
-
-
-  // --- Handlers for Vault Picker ---
-  const handleVaultReady = async () => {
-      const ws = await vaultService.loadWorkspace();
-      setWorkspace(ws);
-      setVaultState('active');
-      paneSystem.openStarMapTab(); 
-  };
-
-  // --- Sync Effects ---
-  useEffect(() => {
-    if (workspace && vaultState === 'active') {
-        vaultService.onWorkspaceChange(workspace);
-    }
-  }, [workspace, vaultState]);
-
-  // --- Global Keyboard Shortcuts ---
-  // Uses hotkeys.json bindings if available
-  useEffect(() => {
-      if (!workspace) return;
-
-      const handleGlobalKeyDown = (e: KeyboardEvent) => {
-          const { bindings } = workspace.hotkeys;
-          
-          const match = bindings.find(b => {
-              if (!b.enabled) return false;
-              
-              const parts = b.keys.toLowerCase().split('+');
-              const key = parts.pop();
-              const mod = parts.includes('mod') || parts.includes('ctrl') || parts.includes('cmd');
-              const shift = parts.includes('shift');
-              const alt = parts.includes('alt');
-
-              const eventMod = e.metaKey || e.ctrlKey;
-              return e.key.toLowerCase() === key && eventMod === mod && e.shiftKey === shift && e.altKey === alt;
-          });
-
-          if (match) {
-              e.preventDefault();
-              
-              // Global App Commands
-              if (match.command === 'note.new') {
-                  setCreationTargetFolderId('inbox');
-                  setIsCreationModalOpen(true);
-                  return;
-              }
-              
-              // Dispatch to focused editor or other components
-              const event = new CustomEvent('app-command', { detail: { command: match.command } });
-              window.dispatchEvent(event);
-          }
-      };
-      window.addEventListener('keydown', handleGlobalKeyDown);
-      return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [workspace]);
-
-  // Sync tab titles active logic
-  useEffect(() => {
-      if (!workspace) return;
-      
-      const updates: { paneId: any, tabId: string, title: string }[] = [];
-      (Object.entries(paneSystem.state.panes) as [PaneId, PaneState][]).forEach(([paneId, pane]) => {
-          pane.tabs.forEach(tab => {
-              if (tab.kind === 'note') {
-                  const note = workspace.notes[(tab as NoteTab).payload.noteId];
-                  if (note && tab.title !== note.title) {
-                       updates.push({ paneId, tabId: tab.id, title: note.title });
-                  }
-              }
-          });
-      });
-      updates.forEach(u => paneSystem.updateTabState(u.paneId, u.tabId, { title: u.title } as any));
-  }, [workspace]);
-
-  // --- Render Gates ---
-
-  if (vaultState === 'initializing') return <div className="text-muted bg-chrome-bg h-screen flex items-center justify-center font-mono text-sm">Connecting to Cosmos...</div>;
-  if (vaultState === 'no-vault') return <VaultPicker onReady={handleVaultReady} />;
-  if (!workspace) return null;
+  // --- Derived State ---
+  const activeMode = navState.activeMode;
+  const focusedPane = paneSystem.state.panes[paneSystem.state.focusedPaneId];
+  const activeTab = focusedPane?.tabs.find(t => t.id === focusedPane.activeTabId);
+  const activeNoteId = activeTab?.kind === 'note' ? (activeTab as NoteTab).payload.noteId : null;
 
   // --- Handlers ---
-
   const handleCreateNoteTrigger = (folderId: string = 'inbox') => {
       setCreationTargetFolderId(folderId);
       setIsCreationModalOpen(true);
   };
 
-  const handleCreateNoteConfirm = (options: any) => {
-      if (!workspace) return;
-      const newNote = createNote(workspace, options);
-      
-      // Update local state
-      setWorkspace({ ...workspace }); 
-      
-      // Persist Note immediately
-      vaultService.onNoteChange(newNote);
+  const handleManualSave = () => {
+      window.dispatchEvent(new CustomEvent('app-command', { detail: { command: 'note.save' } }));
+  };
 
-      paneSystem.openNoteTab(newNote.id, newNote.title);
-      setIsCreationModalOpen(false);
+  const handleFind = () => {
+      window.dispatchEvent(new CustomEvent('app-command', { detail: { command: 'editor.find' } }));
   };
 
   const handleUpdateNote = (updatedNote: Note, updatedWorkspace?: Workspace) => {
@@ -254,55 +104,234 @@ const App: React.FC = () => {
   };
 
   const handleOpenNote = (id: string) => {
+      if (!workspace) return;
       const note = workspace.notes[id];
       if (note) {
-          // NOTE: We do NOT force load content here anymore. NoteEditor handles lazy load on mount.
-          // This keeps open fast and UI responsive.
           paneSystem.openNoteTab(id, note.title);
       } else {
           paneSystem.openNoteTab(id, "Unresolved Link");
       }
   };
 
-  const handleOpenMap = () => {
+  const handleOpenMap = (mapId?: string) => {
       paneSystem.openStarMapTab();
   };
 
-  const focusedPane = paneSystem.state.panes[paneSystem.state.focusedPaneId];
-  const activeTab = focusedPane.tabs.find(t => t.id === focusedPane.activeTabId);
-  const activeNoteId = activeTab?.kind === 'note' ? (activeTab as NoteTab).payload.noteId : null;
+  // --- Hotkeys ---
+  useHotkeys(
+      workspace as Workspace, 
+      paneSystem,
+      navState,
+      (partial) => setNavState(prev => ({...prev, ...partial})),
+      widgetState,
+      setWidgetState,
+      {
+          saveNote: handleManualSave,
+          findInNote: handleFind,
+          newNote: () => {
+              if (activeMode === 'starmap') { /* Map create */ }
+              else if (activeMode === 'glossary') { /* Term create */ }
+              else handleCreateNoteTrigger();
+          }
+      }
+  );
+
+  // --- Lifecycle ---
+  useEffect(() => {
+      const init = async () => {
+          const status = await vaultService.initialize();
+          if (status === 'active') {
+              try {
+                  const ws = await vaultService.loadWorkspace();
+                  const uiState = await vaultService.loadUIState();
+                  
+                  if (uiState) {
+                      let missingCount = 0;
+                      // Validate restored tabs
+                      if (uiState.paneSystem && uiState.paneSystem.panes) {
+                          Object.values(uiState.paneSystem.panes).forEach((pane: PaneState) => {
+                              pane.tabs = pane.tabs.map(tab => {
+                                  if (tab.kind === 'note') {
+                                      const noteTab = tab as NoteTab;
+                                      const note = ws.notes[noteTab.payload.noteId];
+                                      if (note) {
+                                          return { ...tab, title: note.title };
+                                      } else {
+                                          missingCount++;
+                                          return {
+                                              ...tab,
+                                              kind: 'missing',
+                                              title: 'Missing: ' + tab.title,
+                                              payload: { ...noteTab.payload, originalKind: 'note', lastKnownTitle: tab.title }
+                                          } as MissingTab;
+                                      }
+                                  }
+                                  return tab;
+                              });
+                          });
+                          paneSystem.restoreState(uiState.paneSystem);
+                      }
+
+                      setSidebarState(uiState.layout || DEFAULT_SIDEBAR_STATE);
+                      setNavState({ ...DEFAULT_NAV_STATE, ...(uiState.navigation || {}) });
+                      setWidgetState(uiState.widgets || DEFAULT_WIDGET_STATE);
+
+                      if (missingCount > 0) {
+                          logNotification(ws, 'warning', `Restored workspace with ${missingCount} missing refs.`);
+                          vaultService.onWorkspaceChange(ws); 
+                      }
+                  } else {
+                      // Fresh Start
+                      const notes = (Object.values(ws.notes) as Note[]).sort((a, b) => b.updatedAt - a.updatedAt);
+                      if (notes.length > 0) {
+                          paneSystem.openNoteTab(notes[0].id, notes[0].title);
+                      } else {
+                          paneSystem.openStarMapTab();
+                      }
+                  }
+
+                  setWorkspace(ws);
+                  setVaultState('active');
+              } catch (e) {
+                  console.error("Failed to load vault workspace", e);
+                  setVaultState('no-vault');
+              }
+          } else {
+              setVaultState('no-vault');
+          }
+      };
+      init();
+  }, []);
+
+  // --- Persistence ---
+  useEffect(() => {
+      if (vaultState === 'active' && workspace) {
+          const currentUIState: UIState = {
+              schemaVersion: 1,
+              savedAt: Date.now(),
+              paneSystem: paneSystem.state,
+              layout: sidebarState,
+              navigation: navState,
+              widgets: widgetState
+          };
+          vaultService.debouncedSaveUIState(currentUIState);
+      }
+  }, [paneSystem.state, sidebarState, navState, widgetState, vaultState, workspace]);
+
+  // Sync tab titles
+  useEffect(() => {
+      if (!workspace) return;
+      const updates: { paneId: any, tabId: string, title: string }[] = [];
+      (Object.entries(paneSystem.state.panes) as [PaneId, PaneState][]).forEach(([paneId, pane]) => {
+          pane.tabs.forEach(tab => {
+              if (tab.kind === 'note') {
+                  const note = workspace.notes[(tab as NoteTab).payload.noteId];
+                  if (note && tab.title !== note.title) {
+                       updates.push({ paneId, tabId: tab.id, title: note.title });
+                  }
+              }
+          });
+      });
+      updates.forEach(u => paneSystem.updateTabState(u.paneId, u.tabId, { title: u.title } as any));
+  }, [workspace]);
+
+  // --- Handlers for Vault Picker ---
+  const handleVaultReady = async () => {
+      const ws = await vaultService.loadWorkspace();
+      setWorkspace(ws);
+      setVaultState('active');
+      paneSystem.openStarMapTab(); 
+  };
+
+  // --- Sync Effects ---
+  useEffect(() => {
+    if (workspace && vaultState === 'active') {
+        vaultService.onWorkspaceChange(workspace);
+    }
+  }, [workspace, vaultState]);
+
+  // --- Layout Toggle Listener ---
+  useEffect(() => {
+      const handleLayoutCommands = (e: CustomEvent) => {
+          if (e.detail.command === 'toggle-nav-bar') {
+              setSidebarState(prev => ({ ...prev, navCollapsed: !prev.navCollapsed }));
+          }
+          if (e.detail.command === 'toggle-widget-bar') {
+              setSidebarState(prev => ({ ...prev, widgetCollapsed: !prev.widgetCollapsed }));
+          }
+      };
+      window.addEventListener('app-command', handleLayoutCommands as any);
+      return () => window.removeEventListener('app-command', handleLayoutCommands as any);
+  }, []);
+
+  const handleCreateNoteConfirm = (options: any) => {
+      if (!workspace) return;
+      const newNote = createNote(workspace, options);
+      setWorkspace({ ...workspace }); 
+      vaultService.onNoteChange(newNote);
+      paneSystem.openNoteTab(newNote.id, newNote.title);
+      setIsCreationModalOpen(false);
+  };
+
+  // --- Render Gates ---
+  if (vaultState === 'initializing') return <div className="text-muted bg-chrome-bg h-screen flex items-center justify-center font-mono text-sm">Connecting to Cosmos...</div>;
+  if (vaultState === 'no-vault') return <VaultPicker onReady={handleVaultReady} />;
+  if (!workspace) return null;
+
+  // --- Component Rendering Selectors ---
+  const renderNavigation = () => {
+      switch(activeMode) {
+          case 'notes': return <NotesNavigation workspace={workspace} onOpenNote={handleOpenNote} onCreateNote={handleCreateNoteTrigger} onUpdateWorkspace={handleUpdateWorkspace} activeNoteId={activeNoteId} state={navState.notes} onStateChange={(p) => setNavState(prev => ({ ...prev, notes: { ...prev.notes, ...p } }))} />;
+          case 'starmap': return <StarMapNavigation workspace={workspace} onOpenMap={handleOpenMap} onUpdateWorkspace={handleUpdateWorkspace} />;
+          case 'glossary': return <GlossaryNavigation workspace={workspace} onUpdateWorkspace={handleUpdateWorkspace} onOpenTerm={() => {}} />;
+          default: return null;
+      }
+  };
+
+  const renderWidgets = () => (
+      <WidgetBar 
+          workspace={workspace} 
+          activeNoteId={activeNoteId} 
+          activeTab={activeTab} 
+          onOpenNote={handleOpenNote} 
+          onUpdateWorkspace={handleUpdateWorkspace} 
+          initialState={widgetState} 
+          onStateChange={setWidgetState} 
+      />
+  );
 
   return (
     <>
-        <Layout
-            workspace={workspace}
-            onOpenNote={handleOpenNote}
-            onOpenMap={handleOpenMap}
-            onCreateNote={handleCreateNoteTrigger}
-            onUpdateWorkspace={handleUpdateWorkspace}
-            activeNoteId={activeNoteId}
-            activeTab={activeTab}
-            initialSidebarState={sidebarState}
+        <DevInvariantChecker paneSystem={paneSystem.state} widgetState={widgetState} />
+        
+        <AppShell
+            sidebarState={sidebarState}
             onSidebarChange={(partial) => setSidebarState(prev => ({...prev, ...partial}))}
-            initialNavState={navState}
-            onNavChange={(partial) => setNavState(prev => ({...prev, ...partial}))}
-            initialWidgetState={widgetState}
-            onWidgetChange={setWidgetState}
+            activeMode={activeMode}
+            onModeChange={(m) => setNavState(prev => ({...prev, activeMode: m}))}
+            navigationPanel={renderNavigation()}
+            widgetPanel={renderWidgets()}
+            unresolvedCount={workspace.indexes.unresolved_note_ids.length}
+            onSettingsOpen={() => setIsSettingsOpen(true)}
         >
             <PaneGrid 
                 system={paneSystem.state}
                 onFocusPane={paneSystem.focusPane}
                 onCloseTab={paneSystem.closeTab}
+                onClosePane={paneSystem.closePane}
                 onSelectTab={paneSystem.setActiveTab}
                 onReorderTab={paneSystem.reorderTab}
                 onMoveTab={paneSystem.moveTabToPane}
                 onUpdateTabState={paneSystem.updateTabState}
+                handleDragToSplit={paneSystem.handleDragToSplit}
                 workspace={workspace}
                 onUpdateNote={handleUpdateNote}
                 onGenerateTitle={handleGenerateTitle}
                 onOpenNote={handleOpenNote}
+                onCreateNote={() => handleCreateNoteTrigger('inbox')}
+                onOpenMap={handleOpenMap}
             />
-        </Layout>
+        </AppShell>
         
         <NoteCreationModal 
             isOpen={isCreationModalOpen}
@@ -310,6 +339,14 @@ const App: React.FC = () => {
             onCreate={handleCreateNoteConfirm}
             workspace={workspace}
         />
+
+        {isSettingsOpen && (
+            <SettingsModal 
+                workspace={workspace} 
+                onUpdateWorkspace={handleUpdateWorkspace} 
+                onClose={() => setIsSettingsOpen(false)} 
+            />
+        )}
     </>
   );
 };

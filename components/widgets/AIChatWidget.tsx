@@ -1,36 +1,48 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Send, Bot } from 'lucide-react';
+import { WidgetProps } from './WidgetRegistry';
 
 interface Message {
   role: 'user' | 'model';
   text: string;
 }
 
-const AIChatWidget: React.FC = () => {
-  const [messages, setMessages] = useState<Message[]>([
-    { role: 'model', text: 'Greetings, Keeper. I am ready to assist.' }
-  ]);
+const AIChatWidget: React.FC<WidgetProps> = ({ state, onStateChange }) => {
+  // Use persisted history or default
+  const messages: Message[] = state?.history && state.history.length > 0 
+    ? state.history 
+    : [{ role: 'model', text: 'Greetings, Keeper. I am ready to assist.' }];
+
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Update scroll on message change
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages.length]);
+
+  const updateHistory = (newMessages: Message[]) => {
+      onStateChange({ ...state, history: newMessages });
+  };
 
   const handleSend = () => {
     if (!input.trim()) return;
     
-    const userMsg = input;
+    const userMsg: Message = { role: 'user', text: input };
+    const newHistory = [...messages, userMsg];
+    
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', text: userMsg }]);
+    updateHistory(newHistory);
     setIsLoading(true);
 
     // Mock Response Delay
     setTimeout(() => {
-        setMessages(prev => [...prev, { role: 'model', text: 'AI Chat placeholder. Real lore constrained mode will be added later.' }]);
+        const botMsg: Message = { role: 'model', text: 'AI Chat placeholder. Real lore constrained mode will be added later.' };
+        updateHistory([...newHistory, botMsg]);
         setIsLoading(false);
     }, 1000);
   };

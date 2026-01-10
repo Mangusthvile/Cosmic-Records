@@ -1,11 +1,6 @@
 
 import React, { useMemo } from 'react';
-import { Note } from '../../types';
-import { AlignLeft } from 'lucide-react';
-
-interface OutlineWidgetProps {
-    note: Note | null;
-}
+import { WidgetProps } from './WidgetRegistry';
 
 interface OutlineItem {
     id: string;
@@ -33,8 +28,6 @@ const getOutlineFromDoc = (doc: any): OutlineItem[] => {
                 });
             }
             
-            // Only add if we have an ID (HeadingId extension ensures this, but safe guard)
-            // or fallback to index based if no ID? For now rely on ID.
             if (node.attrs && node.attrs.id) {
                 headings.push({
                     id: node.attrs.id,
@@ -42,9 +35,6 @@ const getOutlineFromDoc = (doc: any): OutlineItem[] => {
                     text: text || "Untitled Section"
                 });
             } else if (node.attrs) {
-                 // Fallback for headings without ID (legacy or race condition)
-                 // We won't be able to scroll reliably without ID, so maybe skip or use random?
-                 // Let's generate a temporary one to at least show it, but scrolling might fail.
                  headings.push({
                     id: 'missing-id',
                     level: node.attrs.level,
@@ -53,8 +43,6 @@ const getOutlineFromDoc = (doc: any): OutlineItem[] => {
             }
         }
         
-        // Recursive traversal (though headings are usually top-level blocks in standard schema)
-        // Some schemas allow headings in blockquotes etc.
         if (node.content && Array.isArray(node.content)) {
             node.content.forEach(traverse);
         }
@@ -64,16 +52,23 @@ const getOutlineFromDoc = (doc: any): OutlineItem[] => {
     return headings;
 };
 
-const OutlineWidget: React.FC<OutlineWidgetProps> = ({ note }) => {
-    // Memoize outline computation to avoid excessive processing on unrelated renders
-    const headings = useMemo(() => {
-        if (!note || !note.content) return [];
-        return getOutlineFromDoc(note.content);
-    }, [note?.content, note?.id]);
+const OutlineWidget: React.FC<WidgetProps> = ({ workspace, activeNoteId, activeTab }) => {
+    const note = activeNoteId ? workspace.notes[activeNoteId] : null;
+    const isNoteTab = activeTab?.kind === 'note';
+
+    if (!isNoteTab) {
+        return <div className="p-4 text-center text-xs text-text2 italic">Outline not available in this view.</div>;
+    }
 
     if (!note) {
         return <div className="p-4 text-center text-xs text-muted italic">No active note.</div>;
     }
+
+    // Memoize outline computation
+    const headings = useMemo(() => {
+        if (!note || !note.content) return [];
+        return getOutlineFromDoc(note.content);
+    }, [note?.content, note?.id]);
 
     if (headings.length === 0) {
         return <div className="p-4 text-center text-xs text-muted italic">No headings found.</div>;

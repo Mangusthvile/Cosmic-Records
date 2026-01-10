@@ -1,14 +1,10 @@
 
 import React from 'react';
-import { Workspace, NotificationLogItem } from '../../types';
+import { NotificationLogItem } from '../../types';
 import { Info, AlertTriangle, CheckCircle, Activity } from 'lucide-react';
+import { WidgetProps } from './WidgetRegistry';
 
-interface NotificationsWidgetProps {
-    workspace: Workspace;
-    onOpenNote: (id: string) => void;
-}
-
-const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({ workspace, onOpenNote }) => {
+const NotificationsWidget: React.FC<WidgetProps> = ({ workspace, onOpenNote }) => {
     const logs = workspace.notificationLog || [];
 
     const getIcon = (type: NotificationLogItem['type']) => {

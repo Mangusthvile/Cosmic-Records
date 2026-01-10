@@ -1,20 +1,22 @@
 
 import React from 'react';
-import { Workspace, Note, UnresolvedOrigin } from '../../types';
-import { Link2, AlertTriangle, ArrowRight, XCircle } from 'lucide-react';
+import { UnresolvedOrigin } from '../../types';
+import { AlertTriangle, ArrowRight, XCircle } from 'lucide-react';
 import { extractLinkTitles } from '../../services/linkService';
 import { clearUnresolvedOrigins } from '../../services/storageService';
 import { noteContentToPlainText } from '../../services/vaultService';
+import { WidgetProps } from './WidgetRegistry';
 
-interface BacklinksWidgetProps {
-    note: Note | null;
-    workspace: Workspace;
-    onOpenNote: (id: string) => void;
-}
+const BacklinksWidget: React.FC<WidgetProps> = ({ workspace, activeNoteId, activeTab, onOpenNote }) => {
+    const note = activeNoteId ? workspace.notes[activeNoteId] : null;
+    const isNoteTab = activeTab?.kind === 'note';
 
-const BacklinksWidget: React.FC<BacklinksWidgetProps> = ({ note, workspace, onOpenNote }) => {
+    if (!isNoteTab) {
+        return <div className="p-4 text-center text-xs text-text2 italic">Backlinks not available in this view.</div>;
+    }
+
     if (!note) {
-        return <div className="p-4 text-center text-xs text-muted italic">Select a note to view connections.</div>;
+        return <div className="p-4 text-center text-xs text-muted italic">No active note.</div>;
     }
 
     // 1. Incoming Links
@@ -34,7 +36,7 @@ const BacklinksWidget: React.FC<BacklinksWidgetProps> = ({ note, workspace, onOp
             const n = workspace.notes[id];
             return n && n.unresolved ? n : null;
         })
-        .filter((n): n is Note => !!n);
+        .filter((n): n is any => !!n);
 
     const handleClearOrigins = () => {
         if (confirm("Clear the list of origin links for this note? This does not delete the source notes.")) {

@@ -1,16 +1,12 @@
 
 import React, { useState, useEffect } from 'react';
 import { WidgetId, Workspace, WidgetSystemState, Tab } from '../types';
-import { List, Link2, Book, Sparkles, Bell, X, GripVertical, ChevronDown, ChevronUp } from 'lucide-react';
-import { DndContext, closestCenter, DragOverlay, useSensor, useSensors, PointerSensor, DragEndEvent } from '@dnd-kit/core';
-import { SortableContext, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { ChevronDown, ChevronUp, GripVertical, Plus, X } from 'lucide-react';
+import { DndContext, closestCenter, DragOverlay, useSensor, useSensors, PointerSensor, DragEndEvent, DragStartEvent } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import OutlineWidget from './widgets/OutlineWidget';
-import BacklinksWidget from './widgets/BacklinksWidget';
-import GlossaryWidget from './widgets/GlossaryWidget';
-import AIChatWidget from './widgets/AIChatWidget';
-import NotificationsWidget from './widgets/NotificationsWidget';
 import { IconButton } from './ui/Primitives';
+import { WIDGET_REGISTRY, AVAILABLE_WIDGETS, WidgetDefinition } from './widgets/WidgetRegistry';
 
 interface WidgetBarProps {
     workspace: Workspace;
@@ -22,104 +18,168 @@ interface WidgetBarProps {
     onStateChange: (state: WidgetSystemState) => void;
 }
 
-interface WidgetDef { id: WidgetId; title: string; icon: React.ElementType; isGlobal: boolean; }
-const WIDGET_DEFS: WidgetDef[] = [
-    { id: 'outline', title: 'Outline', icon: List, isGlobal: false },
-    { id: 'backlinks', title: 'Connections', icon: Link2, isGlobal: false },
-    { id: 'glossary', title: 'Glossary', icon: Book, isGlobal: true },
-    { id: 'ai_chat', title: 'AI Assistant', icon: Sparkles, isGlobal: true },
-    { id: 'notifications', title: 'System Log', icon: Bell, isGlobal: true },
-];
-
 const WidgetBar: React.FC<WidgetBarProps> = ({ workspace, activeNoteId, activeTab, onOpenNote, onUpdateWorkspace, initialState, onStateChange }) => {
+    // Local state for UI
     const [openWidgetIds, setOpenWidgetIds] = useState<WidgetId[]>(initialState.openWidgetIds || ['outline', 'backlinks']);
     const [widgetStates, setWidgetStates] = useState<Record<string, any>>(initialState.widgetStates || {});
     const [isPickerOpen, setIsPickerOpen] = useState(false);
-    useEffect(() => { onStateChange({ openWidgetIds, widgetStates }); }, [openWidgetIds, widgetStates]);
-    const toggleWidget = (id: WidgetId) => setOpenWidgetIds(prev => prev.includes(id) ? prev.filter(w => w !== id) : prev.length >= 4 ? prev : [...prev, id]);
-    const closeWidget = (id: WidgetId) => setOpenWidgetIds(prev => prev.filter(w => w !== id));
-    
+    const [activeDragId, setActiveDragId] = useState<WidgetId | null>(null);
+
+    // Sync to persistence when state changes
+    useEffect(() => {
+        onStateChange({ openWidgetIds, widgetStates });
+    }, [openWidgetIds, widgetStates]);
+
+    const toggleWidget = (id: WidgetId) => {
+        if (openWidgetIds.includes(id)) {
+            setOpenWidgetIds(prev => prev.filter(w => w !== id));
+        } else {
+            if (openWidgetIds.length >= 4) {
+                alert("Maximum 4 widgets allowed. Close one to open another.");
+                return;
+            }
+            setOpenWidgetIds(prev => [...prev, id]);
+            // Initialize default state if missing
+            if (!widgetStates[id]) {
+                setWidgetStates(prev => ({ ...prev, [id]: WIDGET_REGISTRY[id].defaultState }));
+            }
+        }
+    };
+
+    const updateWidgetState = (id: WidgetId, newState: any) => {
+        setWidgetStates(prev => ({ ...prev, [id]: newState }));
+    };
+
+    // Dnd Handlers
+    const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+    const handleDragStart = (event: DragStartEvent) => {
+        setActiveDragId(event.active.id as WidgetId);
+    };
+
     const handleDragEnd = (event: DragEndEvent) => {
         const { active, over } = event;
         if (active.id !== over?.id && over) {
-            setOpenWidgetIds((items: WidgetId[]) => {
+            setOpenWidgetIds((items) => {
                 const oldIndex = items.indexOf(active.id as WidgetId);
                 const newIndex = items.indexOf(over.id as WidgetId);
-                const newItems = [...items];
-                newItems.splice(oldIndex, 1);
-                newItems.splice(newIndex, 0, active.id as WidgetId);
-                return newItems;
+                return arrayMove(items, oldIndex, newIndex);
             });
         }
-    };
-
-    const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-    const renderWidgetContent = (id: WidgetId) => {
-        const isNoteTab = activeTab?.kind === 'note';
-        const isMapTab = activeTab?.kind === 'starmap';
-        if (id === 'outline' && !isNoteTab) return <div className="p-4 text-xs text-text2 italic text-center">Not available in this view.</div>;
-        if (id === 'backlinks' && !isNoteTab) return <div className="p-4 text-xs text-text2 italic text-center">Not available in this view.</div>;
-        if (isMapTab && !['ai_chat', 'notifications'].includes(id)) return <div className="p-4 text-xs text-text2 italic text-center">Not available in Map view.</div>;
-        switch (id) {
-            case 'outline': return <OutlineWidget note={activeNoteId ? workspace.notes[activeNoteId] : null} />;
-            case 'backlinks': return <BacklinksWidget note={activeNoteId ? workspace.notes[activeNoteId] : null} workspace={workspace} onOpenNote={onOpenNote} />;
-            case 'glossary': return <GlossaryWidget workspace={workspace} onUpdateWorkspace={onUpdateWorkspace} />;
-            case 'ai_chat': return <AIChatWidget />;
-            case 'notifications': return <NotificationsWidget workspace={workspace} onOpenNote={onOpenNote} />;
-            default: return null;
-        }
+        setActiveDragId(null);
     };
 
     return (
-        <div className="flex flex-col h-full bg-panel">
-            <div className="flex-shrink-0 border-b border-border bg-panel">
-                <button onClick={() => setIsPickerOpen(!isPickerOpen)} className="w-full flex items-center justify-between px-4 py-2 text-xs font-bold text-text2 hover:text-text uppercase tracking-widest hover:bg-panel2 transition-colors">
-                    <span>Widgets</span>
+        <div className="flex flex-col h-full bg-panel border-l border-border">
+            {/* 1. Header / Picker Toggle */}
+            <div className="flex-shrink-0 border-b border-border bg-panel z-20">
+                <button 
+                    onClick={() => setIsPickerOpen(!isPickerOpen)} 
+                    className="w-full flex items-center justify-between px-4 py-3 text-xs font-bold text-text2 hover:text-text uppercase tracking-widest hover:bg-panel2 transition-colors select-none"
+                >
+                    <span className="flex items-center gap-2">Widgets {openWidgetIds.length > 0 && <span className="text-[10px] opacity-50">({openWidgetIds.length})</span>}</span>
                     {isPickerOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                 </button>
+                
+                {/* 2. Compact Picker */}
                 {isPickerOpen && (
-                    <div className="px-2 pb-2 grid grid-cols-2 gap-1 animate-in slide-in-from-top-1">
-                        {WIDGET_DEFS.map(def => {
-                            const isOpen = openWidgetIds.includes(def.id);
-                            return (
-                                <button key={def.id} onClick={() => toggleWidget(def.id)} className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors ${isOpen ? 'bg-accent/20 text-accent' : 'bg-panel2 text-text2 hover:text-text'}`}>
-                                    <def.icon size={12} /><span>{def.title}</span>
-                                </button>
-                            );
-                        })}
+                    <div className="px-3 pb-3 bg-panel border-b border-border animate-in slide-in-from-top-1 max-h-[300px] overflow-y-auto custom-scrollbar">
+                        <div className="grid grid-cols-1 gap-1">
+                            {AVAILABLE_WIDGETS.map(def => {
+                                const isOpen = openWidgetIds.includes(def.id);
+                                return (
+                                    <button 
+                                        key={def.id} 
+                                        onClick={() => toggleWidget(def.id)} 
+                                        className={`flex items-center justify-between px-3 py-2 rounded text-xs transition-all border
+                                            ${isOpen 
+                                                ? 'bg-accent/10 text-accent border-accent/30 font-bold' 
+                                                : 'bg-panel2 text-text2 border-transparent hover:border-border hover:text-text'}
+                                        `}
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            <def.icon size={14} />
+                                            <span>{def.title}</span>
+                                        </div>
+                                        {isOpen ? <X size={12} className="opacity-70" /> : <Plus size={12} className="opacity-50" />}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        
+                        <div className="mt-3 text-[10px] text-center text-text2 opacity-50">
+                            Max 4 widgets active. Drag active widgets below to reorder.
+                        </div>
                     </div>
                 )}
             </div>
-            <div className="flex-1 overflow-y-auto no-scrollbar flex flex-col">
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                    <SortableContext items={openWidgetIds} strategy={verticalListSortingStrategy}>
-                        {openWidgetIds.map((id) => {
-                            const def = WIDGET_DEFS.find(d => d.id === id)!;
-                            return <SortableWidgetPanel key={id} id={id} title={def.title} icon={def.icon} onClose={() => closeWidget(id)}>{renderWidgetContent(id)}</SortableWidgetPanel>;
-                        })}
-                    </SortableContext>
-                </DndContext>
-                {openWidgetIds.length === 0 && <div className="p-8 text-center text-xs text-text2 italic">No active widgets.</div>}
+            
+            {/* 3. Stacked Active Widgets */}
+            <div className="flex-1 flex flex-col min-h-0 bg-deep-space">
+                {openWidgetIds.length === 0 ? (
+                    <div className="flex-1 flex items-center justify-center p-8 text-center text-xs text-text2 italic">
+                        No active widgets.<br/>Open the picker to add tools.
+                    </div>
+                ) : (
+                    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragStart={handleDragStart} onDragEnd={handleDragEnd}>
+                        <SortableContext items={openWidgetIds} strategy={verticalListSortingStrategy}>
+                            {openWidgetIds.map((id) => {
+                                const def = WIDGET_REGISTRY[id];
+                                if (!def) return null; // Safety
+                                const WidgetComponent = def.component;
+                                
+                                return (
+                                    <SortableWidgetContainer key={id} id={id} title={def.title} icon={def.icon} onClose={() => toggleWidget(id)}>
+                                        <WidgetComponent 
+                                            workspace={workspace}
+                                            activeNoteId={activeNoteId}
+                                            activeTab={activeTab}
+                                            onOpenNote={onOpenNote}
+                                            onUpdateWorkspace={onUpdateWorkspace}
+                                            state={widgetStates[id] || def.defaultState}
+                                            onStateChange={(ns) => updateWidgetState(id, ns)}
+                                        />
+                                    </SortableWidgetContainer>
+                                );
+                            })}
+                        </SortableContext>
+                        
+                        <DragOverlay>
+                            {activeDragId ? (
+                                <div className="h-10 bg-panel border border-accent rounded shadow-xl flex items-center px-4 text-text text-xs font-bold opacity-90">
+                                    {WIDGET_REGISTRY[activeDragId].title}
+                                </div>
+                            ) : null}
+                        </DragOverlay>
+                    </DndContext>
+                )}
             </div>
         </div>
     );
 };
 
-const SortableWidgetPanel: React.FC<{ id: string, title: string, icon: React.ElementType, children: React.ReactNode, onClose: () => void }> = ({ id, title, icon: Icon, children, onClose }) => {
+// --- Stack Item Wrapper ---
+const SortableWidgetContainer: React.FC<{ id: string, title: string, icon: React.ElementType, children: React.ReactNode, onClose: () => void }> = ({ id, title, icon: Icon, children, onClose }) => {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
-    const style = { transform: CSS.Translate.toString(transform), transition, opacity: isDragging ? 0.5 : 1, zIndex: isDragging ? 50 : 'auto' };
+    const style = { transform: CSS.Translate.toString(transform), transition, opacity: isDragging ? 0.3 : 1, zIndex: isDragging ? 50 : 'auto' };
+    
     return (
-        <div ref={setNodeRef} style={style} className="flex flex-col border-b border-border flex-shrink-0 min-h-[150px] max-h-[50%] bg-panel">
-            <div className="flex items-center justify-between px-2 py-1 bg-panel2 border-b border-border select-none group">
-                <div className="flex items-center gap-2 text-text2" {...attributes} {...listeners}>
-                    <GripVertical size={12} className="cursor-grab hover:text-text" />
+        <div ref={setNodeRef} style={style} className="flex flex-col border-b border-border flex-1 min-h-[150px] bg-panel overflow-hidden transition-all">
+            {/* Widget Header */}
+            <div className="flex items-center justify-between px-3 py-1.5 bg-panel2 border-b border-border select-none group flex-shrink-0">
+                <div className="flex items-center gap-2 text-text2 cursor-grab active:cursor-grabbing hover:text-text transition-colors" {...attributes} {...listeners}>
+                    <GripVertical size={12} className="opacity-50 group-hover:opacity-100" />
                     <Icon size={12} />
                     <span className="text-[10px] font-bold uppercase tracking-wider">{title}</span>
                 </div>
-                <IconButton size="sm" onClick={onClose}><X size={12} /></IconButton>
+                <IconButton size="sm" onClick={onClose} className="opacity-50 group-hover:opacity-100"><X size={12} /></IconButton>
             </div>
-            <div className="flex-1 overflow-hidden relative">{children}</div>
+            {/* Widget Body */}
+            <div className="flex-1 overflow-hidden relative bg-panel">
+                {children}
+            </div>
         </div>
     );
 };
+
 export default WidgetBar;
