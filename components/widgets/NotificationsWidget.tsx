@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { Workspace, NotificationLogItem } from '../../types';
 import { Info, AlertTriangle, CheckCircle, Activity } from 'lucide-react';
@@ -15,6 +16,7 @@ const NotificationsWidget: React.FC<NotificationsWidgetProps> = ({ workspace, on
             case 'warning': return <AlertTriangle size={12} className="text-warning" />;
             case 'statusChange': return <Activity size={12} className="text-accent" />;
             case 'system': return <CheckCircle size={12} className="text-success" />;
+            case 'success': return <CheckCircle size={12} className="text-success" />;
             default: return <Info size={12} className="text-muted" />;
         }
     };

@@ -1,8 +1,10 @@
 
 import React from 'react';
 import { Workspace, Note, UnresolvedOrigin } from '../../types';
-import { Link2, AlertTriangle, ArrowRight } from 'lucide-react';
+import { Link2, AlertTriangle, ArrowRight, XCircle } from 'lucide-react';
 import { extractLinkTitles } from '../../services/linkService';
+import { clearUnresolvedOrigins } from '../../services/storageService';
+import { noteContentToPlainText } from '../../services/vaultService';
 
 interface BacklinksWidgetProps {
     note: Note | null;
@@ -23,7 +25,8 @@ const BacklinksWidget: React.FC<BacklinksWidgetProps> = ({ note, workspace, onOp
     const origins = (note.system?.unresolvedOrigins || []) as UnresolvedOrigin[];
 
     // 3. Outgoing Unresolved Links
-    const outgoingTitles = extractLinkTitles(note.content || "");
+    const plainText = noteContentToPlainText(note);
+    const outgoingTitles = extractLinkTitles(plainText);
     const unresolvedOutgoing = outgoingTitles
         .map(t => {
             const id = workspace.indexes.title_to_note_id[t];
@@ -33,15 +36,33 @@ const BacklinksWidget: React.FC<BacklinksWidgetProps> = ({ note, workspace, onOp
         })
         .filter((n): n is Note => !!n);
 
+    const handleClearOrigins = () => {
+        if (confirm("Clear the list of origin links for this note? This does not delete the source notes.")) {
+            clearUnresolvedOrigins(workspace, note.id);
+        }
+    };
+
     return (
         <div className="flex flex-col h-full overflow-y-auto p-3 space-y-4">
             
             {/* STATUS ALERT */}
             {note.unresolved && (
                 <div className="bg-danger/10 border border-danger/30 rounded p-3">
-                    <div className="flex items-center gap-2 text-danger font-bold text-xs mb-1">
-                        <AlertTriangle size={12} /> UNRESOLVED
+                    <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2 text-danger font-bold text-xs">
+                            <AlertTriangle size={12} /> UNRESOLVED
+                        </div>
+                        {origins.length > 0 && (
+                            <button 
+                                onClick={handleClearOrigins}
+                                className="text-[9px] text-danger hover:underline flex items-center gap-1"
+                                title="Clear origin history"
+                            >
+                                <XCircle size={10} /> Clear
+                            </button>
+                        )}
                     </div>
+                    
                     {origins.length > 0 && (
                         <div className="space-y-1 mt-2">
                             {origins.map((src, idx) => (

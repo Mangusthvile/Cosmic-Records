@@ -1,6 +1,7 @@
 
 import { Workspace, Note, SearchFilters } from '../types';
 import { extractLinkTitles } from './linkService';
+import { noteContentToPlainText } from './vaultService';
 
 export interface SearchResult {
     note: Note;
@@ -27,8 +28,13 @@ export const getDescendantFolderIds = (workspace: Workspace, folderId: string): 
  * Optimization: If content is not loaded, this check skips.
  */
 export const hasUnresolvedOutgoingLinks = (workspace: Workspace, note: Note): boolean => {
-    if (!note.content || note.content.length === 0) return false; // Skip unloaded
-    const titles = extractLinkTitles(note.content);
+    // Check if content is loaded (not just empty placeholder)
+    if (!note.content || (typeof note.content === 'object' && (!note.content.content || note.content.content.length === 0))) return false; 
+    
+    // We need to extract links. LinkService now expects text.
+    // Convert TipTap to text for link extraction (expensive, maybe optimize later)
+    const text = noteContentToPlainText(note);
+    const titles = extractLinkTitles(text);
     
     for (const title of titles) {
         const id = workspace.indexes.title_to_note_id[title];
@@ -46,15 +52,18 @@ export const hasUnresolvedOutgoingLinks = (workspace: Workspace, note: Note): bo
 /**
  * Generates a highlighted snippet from content or excerpt
  */
-const getSnippet = (content: string, query: string, fallbackExcerpt?: string): string => {
+const getSnippet = (note: Note, query: string): string => {
     // Priority: content match -> excerpt -> placeholder
+    
+    // Get text representation
+    const content = noteContentToPlainText(note);
     
     if (content) {
         const lowerContent = content.toLowerCase();
         const lowerQuery = query.toLowerCase();
         const index = lowerContent.indexOf(lowerQuery);
         
-        if (index === -1) return fallbackExcerpt || content.substring(0, 100);
+        if (index === -1) return note.excerpt || content.substring(0, 100);
         
         const start = Math.max(0, index - 40);
         const end = Math.min(content.length, index + query.length + 60);
@@ -65,7 +74,7 @@ const getSnippet = (content: string, query: string, fallbackExcerpt?: string): s
         return text;
     }
 
-    return fallbackExcerpt || "";
+    return note.excerpt || "";
 };
 
 /**
@@ -125,7 +134,7 @@ export const searchNotes = (workspace: Workspace, query: string, filters: Search
                 const inTitle = note.title.toLowerCase().includes(lowerQuery);
                 
                 // Match against excerpt if content not loaded, or content if loaded
-                const searchableText = (note.content || note.excerpt || "").toLowerCase();
+                const searchableText = (noteContentToPlainText(note) || note.excerpt || "").toLowerCase();
                 const inContent = searchableText.includes(lowerQuery);
                 
                 return inTitle || inContent;
@@ -150,7 +159,7 @@ export const searchNotes = (workspace: Workspace, query: string, filters: Search
             return {
                 note,
                 score,
-                snippet: getSnippet(note.content || "", lowerQuery, note.excerpt),
+                snippet: getSnippet(note, lowerQuery),
                 hasUnresolvedLinks: hasUnresolvedOutgoingLinks(workspace, note)
             };
         })

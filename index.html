@@ -6,44 +6,46 @@
     <title>Cosmic Records</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
     <script>
       tailwind.config = {
         theme: {
           extend: {
+            colors: {
+              bg: 'var(--bg)',
+              panel: 'var(--panel)',
+              panel2: 'var(--panel2)',
+              border: 'var(--border)',
+              text: 'var(--text)',
+              text2: 'var(--text2)',
+              accent: 'var(--accent)',
+              accent2: 'var(--accent2)',
+              danger: 'var(--danger)',
+              focus: 'var(--focus)',
+            },
             fontFamily: {
               sans: ['Inter', 'sans-serif'],
               mono: ['JetBrains Mono', 'monospace'],
             },
-            colors: {
-              // App Chrome (Immutable)
-              chrome: {
-                bg: 'var(--c-chrome-bg)',
-                panel: 'var(--c-chrome-panel)',
-                border: 'var(--c-chrome-border)',
-                text: 'var(--c-chrome-text)',
-              },
-              // Content Area (Themeable via CSS vars)
-              background: 'var(--c-bg)',
-              surface: 'var(--c-surface)',
-              panel: 'var(--c-panel)',
-              border: 'var(--c-border)',
-              
-              // Text (Themeable)
-              foreground: 'var(--c-text)',
-              muted: 'var(--c-text-muted)',
-              faint: 'var(--c-text-faint)',
-              
-              // Accents (Themeable)
-              accent: 'var(--c-accent)',
-              'accent-glow': 'var(--c-accent-glow)',
-              
-              // Status (Fixed)
-              success: 'var(--c-success)',
-              warning: 'var(--c-warning)',
-              danger: 'var(--c-danger)',
+            spacing: {
+              's1': 'var(--s1)',
+              's2': 'var(--s2)',
+              's3': 'var(--s3)',
+              's4': 'var(--s4)',
+              's5': 'var(--s5)',
+              's6': 'var(--s6)',
+            },
+            borderRadius: {
+              'sm': 'var(--r-sm)',
+              'md': 'var(--r-md)',
+              'lg': 'var(--r-lg)',
             },
             boxShadow: {
-              'glow': '0 0 10px var(--c-accent-glow)',
+              'soft': 'var(--shadow)',
+              'glow': '0 0 10px var(--accent2)',
+            },
+            transitionDuration: {
+              'fast': 'var(--dur-fast)',
             }
           }
         }
@@ -51,106 +53,149 @@
     </script>
     <style>
       :root {
-        /* --- DARK COSMOS BASE TOKENS --- */
+        /* --- DARK COSMOS TOKENS --- */
         
-        /* Chrome Layers (Sidebar, Rail, Global Headers) */
-        --c-chrome-bg: #09090b;      /* Zinc 950 */
-        --c-chrome-panel: #18181b;   /* Zinc 900 */
-        --c-chrome-border: #27272a;  /* Zinc 800 */
-        --c-chrome-text: #e4e4e7;    /* Zinc 200 */
+        /* 1) Colors */
+        --bg: #09090b;       /* Zinc 950 */
+        --panel: #121214;    /* Slightly lighter than bg */
+        --panel2: #1c1c1f;   /* Raised surfaces */
+        --border: #27272a;   /* Zinc 800 */
+        
+        --text: #e4e4e7;     /* Zinc 200 */
+        --text2: #a1a1aa;    /* Zinc 400 */
+        
+        --accent: #38bdf8;   /* Sky 400 */
+        --accent2: rgba(56, 189, 248, 0.15);
+        
+        --danger: #f87171;   /* Red 400 */
+        --success: #34d399;  /* Emerald 400 */
+        --warning: #fbbf24;  /* Amber 400 */
+        
+        --focus: #38bdf8;
+        --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
 
-        /* Content Base Defaults (Matches Chrome initially) */
-        --c-bg: #09090b;
-        --c-panel: #18181b;
-        --c-surface: #27272a;        /* Zinc 800 */
-        --c-border: #27272a;
-        
-        /* Text */
-        --c-text: #e4e4e7;           /* Zinc 200 */
-        --c-text-muted: #a1a1aa;     /* Zinc 400 */
-        --c-text-faint: #52525b;     /* Zinc 600 */
+        /* 2) Spacing */
+        --s1: 4px;
+        --s2: 8px;
+        --s3: 12px;
+        --s4: 16px;
+        --s5: 24px;
+        --s6: 32px;
 
-        /* States */
-        --c-hover: rgba(255, 255, 255, 0.03);
-        --c-active: rgba(255, 255, 255, 0.08);
-        --c-focus-ring: #38bdf8;
+        /* 3) Typography */
+        --font-ui: 'Inter', system-ui, sans-serif;
+        --fs-xs: 0.75rem;
+        --fs-sm: 0.875rem;
+        --fs-md: 1rem;
         
-        /* Accents */
-        --c-accent: #38bdf8;         /* Sky 400 */
-        --c-accent-glow: rgba(56, 189, 248, 0.2);
-        
-        /* Status */
-        --c-success: #34d399;        /* Emerald 400 */
-        --c-warning: #fbbf24;        /* Amber 400 */
-        --c-danger: #f87171;         /* Red 400 */
-
-        /* Spacing & Radius */
+        /* 4) Radius */
         --r-sm: 4px;
-        --r-md: 8px;
-        --r-lg: 12px;
+        --r-md: 6px;
+        --r-lg: 8px;
+
+        /* 5) Motion */
+        --ease: cubic-bezier(0.4, 0, 0.2, 1);
+        --dur-fast: 150ms;
+
+        /* 6) Icons */
+        --icon-size: 18px;
+        --icon-stroke: 1.75;
       }
 
       body {
-        background-color: var(--c-chrome-bg);
-        color: var(--c-chrome-text);
+        background-color: var(--bg);
+        color: var(--text);
+        font-family: var(--font-ui);
         overflow: hidden;
         -webkit-font-smoothing: antialiased;
       }
       
       /* Global Focus Styles */
       :focus-visible {
-        outline: 2px solid var(--c-focus-ring);
-        outline-offset: 2px;
-        border-radius: 2px;
+        outline: 2px solid var(--focus);
+        outline-offset: -1px;
       }
 
       /* Custom thin scrollbar */
       ::-webkit-scrollbar { width: 6px; height: 6px; }
       ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: var(--c-chrome-border); border-radius: 3px; }
-      ::-webkit-scrollbar-thumb:hover { background: var(--c-text-faint); }
+      ::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--r-sm); }
+      ::-webkit-scrollbar-thumb:hover { background: var(--text2); }
       
       .no-scrollbar::-webkit-scrollbar { display: none; }
       .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
-      /* Utility Helper Classes */
-      .bg-glass {
-        background: rgba(9, 9, 11, 0.7);
-        backdrop-filter: blur(12px);
-      }
-      
-      /* Starry Background (Applied to Map or Note Editor) */
+      /* Starry Background Utility */
       .bg-deep-space {
-        background-color: var(--c-chrome-bg);
+        background-color: var(--bg);
         background-image: 
-          /* Nebula/Glow */
           radial-gradient(circle at 50% 50%, rgba(30, 30, 45, 0.3) 0%, transparent 100%),
-          /* Stars Small */
           radial-gradient(1.5px 1.5px at 10% 10%, rgba(255,255,255,0.2) 1px, transparent 0),
-          /* Stars Medium */
-          radial-gradient(1px 1px at 20% 20%, rgba(255,255,255,0.15) 1px, transparent 0),
-          /* Stars Scattered */
-          radial-gradient(2px 2px at 40% 40%, rgba(255,255,255,0.1) 1px, transparent 0),
-           /* Stars Dense */
-          radial-gradient(1.5px 1.5px at 50% 50%, rgba(255,255,255,0.1) 1px, transparent 0),
-           /* Stars Dense 2 */
-          radial-gradient(1px 1px at 80% 80%, rgba(255,255,255,0.15) 1px, transparent 0);
-        background-size: 100% 100%, 550px 550px, 350px 350px, 250px 250px, 300px 300px, 600px 600px;
+          radial-gradient(1px 1px at 20% 20%, rgba(255,255,255,0.15) 1px, transparent 0);
+        background-size: 100% 100%, 550px 550px, 350px 350px;
         background-repeat: repeat;
       }
+
+      /* --- TIP TAP EDITOR OVERRIDES --- */
+      .ProseMirror { outline: none; min-height: 100%; padding-bottom: 200px; color: var(--text); }
+      .ProseMirror p.is-editor-empty:first-child::before {
+        content: attr(data-placeholder);
+        float: left;
+        color: var(--text2);
+        pointer-events: none;
+        height: 0;
+      }
+      .ProseMirror h1 { font-size: 1.75rem; font-weight: 700; color: var(--accent); margin-top: 1.5em; margin-bottom: 0.5em; }
+      .ProseMirror h2 { font-size: 1.4rem; font-weight: 600; color: var(--text); margin-top: 1.25em; margin-bottom: 0.5em; }
+      .ProseMirror h3 { font-size: 1.2rem; font-weight: 600; color: var(--text); margin-top: 1em; margin-bottom: 0.5em; }
+      .ProseMirror p { margin-bottom: 0.75em; line-height: 1.6; }
+      .ProseMirror ul, .ProseMirror ol { padding-left: 1.5em; margin-bottom: 0.75em; }
+      .ProseMirror ul { list-style-type: disc; }
+      .ProseMirror ol { list-style-type: decimal; }
+      .ProseMirror blockquote { border-left: 3px solid var(--accent); padding-left: 1em; margin-left: 0; font-style: italic; color: var(--text2); }
+      .ProseMirror pre { background: var(--panel2); padding: 0.75rem; border-radius: var(--r-md); font-family: 'JetBrains Mono', monospace; overflow-x: auto; }
+      .ProseMirror code { font-family: 'JetBrains Mono', monospace; background: var(--panel2); padding: 0.1em 0.3em; border-radius: var(--r-sm); font-size: 0.85em; }
+      .ProseMirror a { color: var(--accent); text-decoration: underline; cursor: pointer; }
+      
+      .search-result { background-color: rgba(56, 189, 248, 0.2); }
+      .search-result-current { background-color: rgba(56, 189, 248, 0.5); color: white; }
     </style>
   <script type="importmap">
 {
   "imports": {
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
+    "react": "https://esm.sh/react@18.2.0",
+    "react/": "https://esm.sh/react@18.2.0/",
+    "react-dom": "https://esm.sh/react-dom@18.2.0",
+    "react-dom/": "https://esm.sh/react-dom@18.2.0/",
     "@google/genai": "https://esm.sh/@google/genai@^1.34.0",
-    "lucide-react": "https://esm.sh/lucide-react@^0.562.0",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0?external=react",
     "d3": "https://esm.sh/d3@^7.9.0",
-    "@dnd-kit/core": "https://esm.sh/@dnd-kit/core@^6.1.0",
-    "@dnd-kit/sortable": "https://esm.sh/@dnd-kit/sortable@^8.0.0",
-    "@dnd-kit/utilities": "https://esm.sh/@dnd-kit/utilities@^3.2.2"
+    "@dnd-kit/core": "https://esm.sh/@dnd-kit/core@^6.1.0?external=react,react-dom",
+    "@dnd-kit/sortable": "https://esm.sh/@dnd-kit/sortable@^8.0.0?external=react,react-dom",
+    "@dnd-kit/utilities": "https://esm.sh/@dnd-kit/utilities@^3.2.2?external=react,react-dom",
+    "@tiptap/core": "https://esm.sh/@tiptap/core@2.1.13",
+    "@tiptap/react": "https://esm.sh/@tiptap/react@2.1.13?external=react,react-dom",
+    "@tiptap/starter-kit": "https://esm.sh/@tiptap/starter-kit@2.1.13",
+    "@tiptap/extension-underline": "https://esm.sh/@tiptap/extension-underline@2.1.13",
+    "@tiptap/extension-text-style": "https://esm.sh/@tiptap/extension-text-style@2.1.13",
+    "@tiptap/extension-color": "https://esm.sh/@tiptap/extension-color@2.1.13",
+    "@tiptap/extension-highlight": "https://esm.sh/@tiptap/extension-highlight@2.1.13",
+    "@tiptap/extension-text-align": "https://esm.sh/@tiptap/extension-text-align@2.1.13",
+    "@tiptap/extension-link": "https://esm.sh/@tiptap/extension-link@2.1.13",
+    "@tiptap/extension-image": "https://esm.sh/@tiptap/extension-image@2.1.13",
+    "@tiptap/extension-table": "https://esm.sh/@tiptap/extension-table@2.1.13",
+    "@tiptap/extension-table-row": "https://esm.sh/@tiptap/extension-table-row@2.1.13",
+    "@tiptap/extension-table-cell": "https://esm.sh/@tiptap/extension-table-cell@2.1.13",
+    "@tiptap/extension-table-header": "https://esm.sh/@tiptap/extension-table-header@2.1.13",
+    "@tiptap/extension-task-list": "https://esm.sh/@tiptap/extension-task-list@2.1.13",
+    "@tiptap/extension-task-item": "https://esm.sh/@tiptap/extension-task-item@2.1.13",
+    "@tiptap/extension-subscript": "https://esm.sh/@tiptap/extension-subscript@2.1.13",
+    "@tiptap/extension-superscript": "https://esm.sh/@tiptap/extension-superscript@2.1.13",
+    "@tiptap/extension-placeholder": "https://esm.sh/@tiptap/extension-placeholder@2.1.13",
+    "@tiptap/suggestion": "https://esm.sh/@tiptap/suggestion@2.1.13",
+    "tippy.js": "https://esm.sh/tippy.js@6.3.7",
+    "katex": "https://esm.sh/katex@0.16.9",
+    "@tiptap/pm/": "https://esm.sh/@tiptap/pm@^3.15.3/"
   }
 }
 </script>

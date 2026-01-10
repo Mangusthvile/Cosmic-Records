@@ -21,5 +21,6 @@ export const TYPE_ICONS: Record<NoteType, string> = {
   "Place": "🪐",
   "Item": "📦",
   "Event": "📅",
-  "Lore": "📜"
+  "Lore": "📜",
+  "Canvas": "🎨"
 };

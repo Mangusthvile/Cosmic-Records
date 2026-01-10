@@ -1,3 +1,4 @@
+
 // --- Wiki Link Parser & Utilities ---
 
 export type Token = 
@@ -71,4 +72,38 @@ export const extractLinkTitles = (content: string): string[] => {
         if (t.kind === 'link') titles.add(t.title);
     });
     return Array.from(titles);
+};
+
+/**
+ * Extracts outbound node IDs from a TipTap document or legacy text.
+ * Returns a deduplicated array of note IDs.
+ */
+export const extractOutboundLinks = (content: any, resolveTitleToId?: (title: string) => string): string[] => {
+    const links = new Set<string>();
+
+    if (typeof content === 'string') {
+        // Legacy Text Fallback
+        const titles = extractLinkTitles(content);
+        if (resolveTitleToId) {
+            titles.forEach(t => {
+                const id = resolveTitleToId(t);
+                if (id) links.add(id);
+            });
+        }
+    } else if (content && typeof content === 'object') {
+        // TipTap Node Traversal
+        const traverse = (node: any) => {
+            if (node.type === 'internalLink' && node.attrs?.targetId) {
+                links.add(node.attrs.targetId);
+            }
+            if (node.content && Array.isArray(node.content)) {
+                node.content.forEach(traverse);
+            }
+        };
+        // Handle wrapper vs direct doc
+        const doc = content.type === 'doc' ? content : (content.doc || content);
+        traverse(doc);
+    }
+
+    return Array.from(links);
 };

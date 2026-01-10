@@ -3,9 +3,9 @@ export type ID = string; // uuid
 export type ISODate = string; // legacy support if needed, but moving to number for Note
 export type Timestamp = number; // Date.now()
 
-// Updated Note Status as per Step 6
+// Updated Note Status per Milestone 4
 export type NoteStatus = "Draft" | "Canon" | "Experimental" | "Outdated" | "Archived";
-export type NoteType = "General" | "Character" | "Place" | "Item" | "Event" | "Lore";
+export type NoteType = "General" | "Character" | "Place" | "Item" | "Event" | "Lore" | "Canvas";
 
 export type UniverseTagID = ID;
 export type TagID = ID;
@@ -14,15 +14,15 @@ export type TemplateID = ID;
 export type MapNodeID = ID;
 export type NotificationID = ID;
 
-// --- CANONICAL DISK SCHEMA (Step 3) ---
+export type WidgetId = 'outline' | 'backlinks' | 'glossary' | 'ai_chat' | 'notifications';
 
-export interface NoteBlock {
-  id: string;
-  type: 'paragraph' | 'heading' | 'list' | 'quote' | 'code' | 'divider';
-  text: string;
-  attrs?: Record<string, any>;
-  marks?: any[]; // Reserved for future rich text marks
+export interface UserPreferences {
+  ai: { proactive: boolean; allow_auto_edits: boolean; remember_preferences: boolean };
+  tts: { mode: string };
+  ui: { gray_out_outdated_titles: boolean; show_badges_in_search: boolean; show_unresolved_prominently: boolean };
 }
+
+// --- CANONICAL DISK SCHEMA (Step 1: Canonical Metadata) ---
 
 export interface UnresolvedOrigin {
     sourceNoteId: string;
@@ -31,11 +31,11 @@ export interface UnresolvedOrigin {
 }
 
 export interface DiskNote {
-  schemaVersion: number;
+  schemaVersion: number; // bumped to 2
   noteId: string;
   meta: {
     title: string;
-    type: string;
+    type: string; // NoteType
     status: NoteStatus;
     unresolved: boolean;
     universeTag: string | null;
@@ -54,10 +54,11 @@ export interface DiskNote {
     };
   };
   content: {
-    format: 'blocks';
-    blocks: NoteBlock[];
+    format: 'tiptap';
+    version: number; // 2
+    doc: any; // TipTap JSON
   };
-  modules: any[]; // Reserved for structured modules
+  modules: any[]; 
   links: {
     outgoing: any[];
     incoming: any[];
@@ -66,8 +67,8 @@ export interface DiskNote {
 
 export interface IndexEntry {
     noteId: string;
-    filePath: string; // Relative path to json file
-    folderPath: string; // Relative path to folder
+    filePath: string; 
+    folderPath: string; 
     fileName: string;
     title: string;
     type: string;
@@ -78,8 +79,9 @@ export interface IndexEntry {
     pinned: boolean;
     createdAt: number;
     updatedAt: number;
-    excerpt: string; // Short snippet
-    folderId: string; // Mapped at runtime for convenience, derived from folderPath
+    excerpt: string; 
+    folderId: string; // Mapped at runtime for convenience
+    outboundLinks?: string[]; 
 }
 
 export interface IndexData {
@@ -88,13 +90,12 @@ export interface IndexData {
     notes: Record<string, IndexEntry>;
 }
 
-// --- CONFIGURATION SCHEMAS (Step 7) ---
+// --- CONFIGURATION SCHEMAS ---
 
-// 1. Settings
 export interface ValidationRule {
     id: string;
     enabled: boolean;
-    scope: string; // e.g. "global", "type:Character"
+    scope: string; 
     kind: "requiredField" | "warning" | "custom";
     data: any;
 }
@@ -121,7 +122,6 @@ export interface SettingsData {
     };
 }
 
-// 2. Templates
 export interface NoteTemplate {
     templateId: string;
     name: string;
@@ -137,13 +137,13 @@ export interface AIInterviewTemplate {
 }
 
 export interface NoteTypeDefinition {
-    typeId: string; // e.g. "General", "Character"
+    typeId: string; 
     name: string;
     defaultTemplateId: string;
     templates: NoteTemplate[];
     aiInterviewTemplates: AIInterviewTemplate[];
-    icon?: string; // Optional UI hint
-    description?: string; // Optional UI hint
+    icon?: string; 
+    description?: string; 
 }
 
 export interface TemplatesData {
@@ -155,12 +155,11 @@ export interface TemplatesData {
     };
 }
 
-// 3. Hotkeys
 export interface KeyBinding {
     command: string;
     keys: string;
     enabled: boolean;
-    label?: string; // For UI display
+    label?: string; 
 }
 
 export interface HotkeysData {
@@ -169,28 +168,13 @@ export interface HotkeysData {
     bindings: KeyBinding[];
 }
 
-// 4. Maps
-export interface MapNodeStyle {
-    shape: "circle" | "ring" | "bubble" | "symbol";
-    icon: string;
-    color: string;
-}
-
-export interface MapNodeData {
-    id: string;
-    noteId: string; // Link to note
-    x: number;
-    y: number;
-    style: MapNodeStyle;
-}
-
 export interface MapData {
     mapId: string;
     name: string;
     createdAt: number;
     updatedAt: number;
     viewState: { zoom: number; panX: number; panY: number };
-    nodes: MapNodeData[];
+    nodes: any[];
     areas: any[];
 }
 
@@ -200,34 +184,31 @@ export interface MapsData {
     maps: Record<string, MapData>;
 }
 
-// --- WIDGET TYPES ---
-export type WidgetId = 'outline' | 'backlinks' | 'glossary' | 'ai_chat' | 'notifications';
-
-export interface WidgetSystemState {
-    openWidgetIds: WidgetId[];
-    widgetStates: Record<string, any>; // Keyed by WidgetId
+export interface CollectionsData {
+    schemaVersion: number;
+    updatedAt: number;
+    collections: Record<ID, Collection>;
 }
 
 // --- SEARCH TYPES ---
 export interface SearchFilters {
     folderId: string | 'all';
+    collectionId?: string | 'all'; // Added collection filtering
     includeSubfolders: boolean;
     universeTagId: string | 'all' | 'none';
     type: string | 'all';
     status: string | 'all';
-    unresolved: 'all' | 'unresolved' | 'resolved'; // Enhanced from boolean
+    unresolved: 'all' | 'unresolved' | 'resolved'; 
 }
 
 // --- PANE SYSTEM TYPES ---
 export type PaneLayout = 'single' | 'splitVertical' | 'splitHorizontal' | 'grid';
 export type PaneId = 'paneA' | 'paneB' | 'paneC' | 'paneD';
 
-// Tab Kinds
 export type TabKind = 'note' | 'starmap' | 'glossary' | 'missing';
 
-// Base Tab
 export interface TabBase {
-  id: string; // uuid
+  id: string; 
   kind: TabKind;
   title: string;
   icon?: string;
@@ -235,7 +216,6 @@ export interface TabBase {
   lastActiveAt?: ISODate;
 }
 
-// 1. Note Tab
 export interface NoteTabState {
   readMode: boolean;
   scrollY?: number;
@@ -248,7 +228,6 @@ export interface NoteTab extends TabBase {
   state: NoteTabState;
 }
 
-// 2. Star Map Tab
 export interface StarMapTabState {
   zoom: number;
   panX: number;
@@ -263,7 +242,6 @@ export interface StarMapTab extends TabBase {
   state: StarMapTabState;
 }
 
-// 3. Glossary Tab
 export interface GlossaryTabState {
   search: string;
   selectedTermId: string | null;
@@ -277,7 +255,6 @@ export interface GlossaryTab extends TabBase {
   state: GlossaryTabState;
 }
 
-// 4. Missing Tab (Placeholder for broken references)
 export interface MissingTab extends TabBase {
   kind: 'missing';
   payload: {
@@ -288,14 +265,13 @@ export interface MissingTab extends TabBase {
   state: any;
 }
 
-// Universal Tab Union
 export type Tab = NoteTab | StarMapTab | GlossaryTab | MissingTab;
 
 export interface PaneState {
   id: PaneId;
   tabs: Tab[];
   activeTabId: string | null;
-  history: string[]; // array of tab IDs, most recent last
+  history: string[]; 
 }
 
 export interface PaneSystemState {
@@ -304,7 +280,7 @@ export interface PaneSystemState {
   panes: Record<PaneId, PaneState>;
 }
 
-// --- LAYOUT & UI PERSISTENCE TYPES ---
+// --- UI PERSISTENCE TYPES ---
 
 export interface SidebarState {
     navWidth: number;
@@ -314,13 +290,18 @@ export interface SidebarState {
 }
 
 export interface NavigationState {
-    selectedSection: string | null; // e.g. 'pinned', 'inbox', 'folder:123'
+    selectedSection: string | null; 
     folderOpenState: Record<string, boolean>;
     searchState?: {
         query: string;
         filters: SearchFilters;
         isFiltersOpen: boolean;
     };
+}
+
+export interface WidgetSystemState {
+    openWidgetIds: string[];
+    widgetStates: Record<string, any>; 
 }
 
 export interface UIState {
@@ -332,9 +313,8 @@ export interface UIState {
     widgets: WidgetSystemState;
 }
 
-// -------------------------
+// --- WORKSPACE ---
 
-// 1. Workspace Root (Adapted for Vault Storage)
 export interface Workspace {
   schema_version: "1.0";
   workspace_id: ID;
@@ -342,16 +322,16 @@ export interface Workspace {
 
   notes: Record<ID, Note>;
   folders: Record<ID, Folder>;
-  collections: Record<ID, Collection>; // Shortcut groups
-  pinnedNoteIds: ID[]; // Legacy: Kept for compat
+  collections: Record<ID, Collection>; 
+  pinnedNoteIds: ID[]; 
   
-  // Configuration & Metadata (Persisted Files)
+  // Persisted Configs
   settings: SettingsData;
   templates: TemplatesData;
   hotkeys: HotkeysData;
   maps: MapsData;
 
-  // Legacy/Other entities (kept for compatibility or specific module data)
+  // Legacy
   tags: Record<TagID, Tag>;
   glossary: {
     terms: Record<GlossaryTermID, GlossaryTerm>;
@@ -363,50 +343,44 @@ export interface Workspace {
     title_to_note_id: Record<string, ID>;
     unresolved_note_ids: ID[];
     outdated_note_ids: ID[];
-    backlinks: Record<ID, ID[]>; // targetNoteId -> list of sourceNoteIds
-    note_files?: Record<ID, { fileName: string, folderPath: string }>; // In-memory index for file resolution
+    backlinks: Record<ID, ID[]>; 
+    note_files?: Record<ID, { fileName: string, folderPath: string }>; 
   };
   
   notifications: Record<NotificationID, Notification>;
   notificationLog: NotificationLogItem[]; 
-  user_preferences: UserPreferences; // Kept for legacy compat, but source is settings.json
+  user_preferences: any; 
 
   created_at: ISODate;
   updated_at: ISODate;
 }
 
-// 2. Core Note Model (Step 6)
 export interface Note {
   id: ID;
-  title: string; // unique
-  type: string; // NoteType string value
+  title: string; 
+  type: string; // NoteType
   status: NoteStatus;
   
   unresolved: boolean;
-  unresolvedSources?: string[]; // IDs of notes that spawned this unresolved note
-  universeTag: string | null; // Name string or null
-  folderId: string; // default Inbox
+  unresolvedSources?: string[]; 
+  universeTag: string | null; 
+  folderId: string; 
   
   createdAt: Timestamp;
   updatedAt: Timestamp;
   
-  content: string; // Runtime string content (mapped to blocks on disk)
-  excerpt?: string; // Short preview text (from index)
-  pinned: boolean; // From index
+  content: any; // TipTap JSON
+  excerpt?: string; 
+  pinned: boolean; 
   
-  // Optional / Legacy / Metadata
   metadata?: any; 
-  system?: any; // System properties like unresolvedOrigins
-  aiInterview?: AIInterviewState; // Stub for AI flow
+  system?: any; 
+  aiInterview?: any; 
   
-  // Visuals (Legacy support)
-  theme?: NoteTheme | null;
-  cover_image?: string | null;
-  
-  // Legacy fields to be deprecated or mapped
   tag_ids: TagID[];
-  universe_tag_id?: UniverseTagID | null; // Legacy mapped
-  content_plain?: string; // Mapped to content
+  content_plain?: string; 
+  
+  outbound_note_ids?: string[];
 }
 
 export interface Folder {
@@ -422,142 +396,11 @@ export interface Folder {
 export interface Collection {
     id: ID;
     name: string;
-    noteIds: ID[];
+    noteIds: ID[]; // References to notes, NO duplication
     createdAt: Timestamp;
     updatedAt: Timestamp;
 }
 
-export interface AIInterviewState {
-  isActive: boolean;
-  step: 'start' | 'interview' | 'generating' | 'complete';
-  transcript: { role: 'ai' | 'user', text: string }[];
-}
-
-export interface NoteTheme {
-  backgroundColor?: string;
-  panelColor?: string; 
-  textColor?: string;
-  mutedColor?: string;
-  accentColor?: string;
-  backgroundImage?: string;
-  overlayOpacity?: number; // 0.0 to 1.0
-}
-
-// Minimal RichDoc contract (simulated as basic object for now)
-export type RichDoc = { type: string; content: any };
-
-export interface OutgoingLink {
-  raw: string;            
-  target_title: string;   
-  display_text: string;   
-  target_note_id: ID;     
-  target_status: NoteStatus | null; 
-  target_unresolved: boolean;
-}
-
-export type NoteMetadata =
-  | { kind: "general"; data: GeneralMeta }
-  | { kind: "character"; data: CharacterMeta }
-  | { kind: "place"; data: PlaceMeta };
-
-export interface GeneralMeta {
-    // Empty in v1
-}
-
-// 3. Character Data
-export interface CharacterMeta {
-  template_id: TemplateID | null;
-  states: CharacterState[];
-  active_state_id: ID;
-  forms: CharacterForm[]; 
-  active_form_id: ID | null;
-  appearance: {
-    description: string;
-    generated_images: GeneratedImageRef[];
-  };
-  modules: Record<string, CharacterModuleInstance>;
-  quick_build: {
-    completed: boolean;
-    last_questions: string[];
-    last_answers: string[];
-  };
-}
-
-export interface CharacterState {
-  id: ID;
-  label: string;          
-  summary: string;        
-  effective_overrides: {
-    module_overrides: Record<string, any>;
-  };
-  created_at: ISODate;
-}
-
-export interface CharacterForm {
-  id: ID;
-  label: string;          
-  summary: string;
-  form_overrides: {
-    module_overrides: Record<string, any>;
-  };
-  created_at: ISODate;
-}
-
-export interface CharacterModuleInstance {
-  module_key: string;     
-  version: string;        
-  required: boolean;      
-  data: any;              
-}
-
-export interface GeneratedImageRef {
-  id: ID;
-  provider: "local" | "external";
-  uri: string;        
-  created_at: ISODate;
-  prompt_used: string;
-}
-
-// 4. Place Data
-export type PlaceScale = "universe" | "galaxy" | "cluster" | "system" | "planet" | "nation" | "region" | "city" | "district" | "building" | "room";
-
-export interface PlaceMeta {
-  template_id: TemplateID | null;
-  scale: PlaceScale;
-  parent_place_note_id: ID | null;
-  child_place_note_ids: ID[];
-  timeline: TimelineEntry[];
-  local_map: LocalMap | null;
-  aggregates: {
-    characters_originating_here: ID[]; 
-    characters_located_here: ID[];     
-  };
-  modules: Record<string, PlaceModuleInstance>;
-}
-
-export interface TimelineEntry {
-  id: ID;
-  title: string;
-  era_label: string;
-  description: string;
-  related_note_ids: ID[];
-  created_at: ISODate;
-}
-
-export interface LocalMap {
-  id: ID;
-  kind: "canvas" | "nodes" | "grid";
-  data: any;
-}
-
-export interface PlaceModuleInstance {
-  module_key: string;
-  version: string;
-  required: boolean;
-  data: any;
-}
-
-// 5. Tags
 export interface Tag {
   id: TagID;
   name: string;      
@@ -565,7 +408,6 @@ export interface Tag {
   created_at: ISODate;
 }
 
-// Legacy Interface: kept but data source is now settings.universeTags
 export interface UniverseTag {
   id: UniverseTagID;
   name: string;      
@@ -573,11 +415,10 @@ export interface UniverseTag {
   created_at: ISODate;
 }
 
-// 6. Glossary
 export interface GlossaryTerm {
   id: GlossaryTermID;
   term: string;                 
-  definition_rich: RichDoc;
+  definition_rich: any;
   definition_plain: string;
   referenced_term_ids: GlossaryTermID[];
   universe_tag_ids: UniverseTagID[]; 
@@ -596,37 +437,10 @@ export interface GlossaryExtractionItem {
   created_at: ISODate;
 }
 
-// 7. Templates
-export interface CharacterTemplate {
-  id: TemplateID;
-  name: string;
-  description: string;
-  required_modules: string[]; 
-  default_modules: Record<string, { version: string; data: any }>;
-  validation_rule_ids: ID[];
-  export_profile: {
-    include_modules: string[];
-  };
-  created_at: ISODate;
-  updated_at: ISODate;
-}
-
-export interface PlaceTemplate {
-  id: TemplateID;
-  name: string;
-  description: string;
-  required_modules: string[]; 
-  default_modules: Record<string, { version: string; data: any }>;
-  validation_rule_ids: ID[];
-  created_at: ISODate;
-  updated_at: ISODate;
-}
-
-// 10. Notifications
 export interface Notification {
   id: NotificationID;
-  kind: "contradiction" | "glossary_conflict" | "unresolved_link" | "validation_warning";
-  severity: "info" | "warn" | "error";
+  kind: string;
+  severity: string;
   title: string;
   message: string;
   related_note_ids: ID[];
@@ -638,25 +452,8 @@ export interface Notification {
 export interface NotificationLogItem {
     id: string;
     timestamp: number;
-    type: "statusChange" | "system" | "warning" | "info";
+    type: "statusChange" | "system" | "warning" | "info" | "success";
     message: string;
     relatedNoteId?: string;
     read: boolean;
-}
-
-// 11. User Preferences (Legacy - now in settings.json)
-export interface UserPreferences {
-  ai: {
-    proactive: boolean;
-    allow_auto_edits: boolean; 
-    remember_preferences: boolean;
-  };
-  tts: {
-    mode: "selected_text_only";
-  };
-  ui: {
-    gray_out_outdated_titles: boolean;
-    show_badges_in_search: boolean;
-    show_unresolved_prominently: boolean;
-  };
 }

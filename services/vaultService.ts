@@ -1,17 +1,19 @@
 
 import { 
-    Workspace, Note, Folder, NoteStatus, NotificationLogItem, ID, DiskNote, IndexEntry, NoteBlock, IndexData, UIState, UnresolvedOrigin,
-    SettingsData, TemplatesData, HotkeysData, MapsData, NoteTypeDefinition, KeyBinding
+    Workspace, Note, DiskNote, IndexEntry, IndexData, UIState, UnresolvedOrigin,
+    SettingsData, TemplatesData, HotkeysData, MapsData, CollectionsData, NoteTypeDefinition
 } from '../types';
 import { getHandle, setHandle } from './idb';
-import { VaultAdapter, FileSystemAccessAdapter, IndexedDbAdapter, DirEntry } from './adapters';
+import { VaultAdapter, FileSystemAccessAdapter, IndexedDbAdapter } from './adapters';
 import { join, dirname, basename } from './path';
 import { logNotification } from './storageService';
-import { extractLinkTitles } from './linkService';
+import { extractOutboundLinks } from './linkService';
 
 // --- Constants ---
 const VAULT_HANDLE_KEY = 'cosmic_vault_handle';
 const METADATA_DIR = '.cosmicrecords';
+const BACKUP_DIR = '.cosmicrecords/backup';
+const ATTACHMENTS_DIR = 'Attachments';
 
 // Metadata Filenames
 const FILES = {
@@ -24,6 +26,7 @@ const FILES = {
     SETTINGS: 'settings.json',
     HOTKEYS: 'hotkeys.json',
     MAPS: 'maps.json',
+    COLLECTIONS: 'collections.json',
     WORKSPACE: 'workspace.json',
     WIDGETS: 'widgets.json',
     PINNED: 'pinned.json',
@@ -55,7 +58,7 @@ const createDefaultSettings = (): SettingsData => ({
 });
 
 const createDefaultTemplates = (): TemplatesData => {
-    // Porting hardcoded list from NoteCreationModal
+    // Updated note types including Canvas
     const types: NoteTypeDefinition[] = [
         { typeId: 'General', name: 'General Note', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'FileText', description: 'A blank canvas for any content.' },
         { typeId: 'Character', name: 'Character', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'User', description: 'A person, creature, or entity.' },
@@ -63,6 +66,7 @@ const createDefaultTemplates = (): TemplatesData => {
         { typeId: 'Item', name: 'Item', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Box', description: 'An object, artifact, or technology.' },
         { typeId: 'Event', name: 'Event', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Calendar', description: 'A historical or timeline event.' },
         { typeId: 'Lore', name: 'Lore', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Scroll', description: 'History, religion, or culture.' },
+        { typeId: 'Canvas', name: 'Canvas', defaultTemplateId: 'blank', templates: [{ templateId: 'blank', name: 'Blank', kind: 'blank', contentBlocks: [] }], aiInterviewTemplates: [], icon: 'Layout', description: 'A spatial board for visual organization.' },
     ];
     return {
         schemaVersion: 1,
@@ -83,6 +87,9 @@ const createDefaultHotkeys = (): HotkeysData => ({
         { command: "pane.splitVertical", keys: "Alt+Shift+2", enabled: true, label: "Split Vertical" },
         { command: "pane.focusLeft", keys: "Alt+ArrowLeft", enabled: true, label: "Focus Left" },
         { command: "pane.focusRight", keys: "Alt+ArrowRight", enabled: true, label: "Focus Right" },
+        { command: "editor.find", keys: "Mod+F", enabled: true, label: "Find in Note" },
+        { command: "editor.findNext", keys: "F3", enabled: true, label: "Find Next" },
+        { command: "editor.findPrev", keys: "Shift+F3", enabled: true, label: "Find Previous" },
     ]
 });
 
@@ -100,6 +107,12 @@ const createDefaultMaps = (): MapsData => ({
             areas: []
         }
     }
+});
+
+const createDefaultCollections = (): CollectionsData => ({
+    schemaVersion: 1,
+    updatedAt: Date.now(),
+    collections: {}
 });
 
 const generateId = (): string => {
@@ -120,21 +133,36 @@ const debounce = (func: Function, wait: number) => {
     };
 };
 
-const generateExcerpt = (content: string, length = 150): string => {
-    return content.replace(/[#*`\[\]()]/g, '').replace(/\s+/g, ' ').trim().substring(0, length);
+export const noteContentToPlainText = (note: any): string => {
+  const c = note?.content;
+  if (!c) return "";
+  if (typeof c === "string") return c;
+  const doc = c.doc ?? c; 
+  if (!doc || typeof doc !== 'object') return "";
+
+  const out: string[] = [];
+  const walk = (node: any) => {
+    if (!node) return;
+    if (typeof node.text === "string") out.push(node.text);
+    if (node.type === 'internalLink' && node.attrs) {
+        out.push(node.attrs.display || node.attrs.fallbackTitle || "Link");
+    }
+    if (Array.isArray(node.content)) node.content.forEach(walk);
+  };
+
+  walk(doc);
+  return out.join(" "); 
 };
 
-// --- Helpers: Filenames ---
+const generateExcerpt = (content: any, length = 150): string => {
+    const text = noteContentToPlainText({ content });
+    return text.trim().substring(0, length);
+};
 
 const slugify = (text: string): string => {
-    return text
-        .toString()
-        .toLowerCase()
-        .trim()
-        .replace(/\s+/g, '-')     // Replace spaces with -
-        .replace(/[^\w\-]+/g, '') // Remove all non-word chars
-        .replace(/\-\-+/g, '-')   // Replace multiple - with single -
-        .substring(0, 60);        // Max length
+    return text.toString().toLowerCase().trim()
+        .replace(/\s+/g, '-').replace(/[^\w\-]+/g, '').replace(/\-\-+/g, '-')
+        .substring(0, 60);
 };
 
 const generateFileName = (title: string, id: string): string => {
@@ -147,7 +175,7 @@ const generateFileName = (title: string, id: string): string => {
 
 const serializeNoteToJSON = (note: Note, folderPath: string): string => {
     const diskNote: DiskNote = {
-        schemaVersion: 1,
+        schemaVersion: 2, 
         noteId: note.id,
         meta: {
             title: note.title,
@@ -166,12 +194,9 @@ const serializeNoteToJSON = (note: Note, folderPath: string): string => {
             system: note.system || {} 
         },
         content: {
-            format: 'blocks',
-            blocks: [{ 
-                id: generateId(), 
-                type: 'paragraph', 
-                text: note.content || "" 
-            }]
+            format: 'tiptap',
+            version: 2,
+            doc: note.content?.doc || note.content || { type: 'doc', content: [] }
         },
         modules: [], 
         links: {
@@ -185,25 +210,39 @@ const serializeNoteToJSON = (note: Note, folderPath: string): string => {
 const parseNoteFromJSON = (jsonString: string): Note | null => {
     try {
         const diskNote = JSON.parse(jsonString) as DiskNote;
+        let content: any = { type: 'doc', content: [] };
         
+        if ((diskNote.content as any).format === 'blocks') {
+            content = { 
+                type: 'doc', 
+                content: (diskNote.content as any).blocks.map((b: any) => ({
+                    type: 'paragraph', content: [{ type: 'text', text: b.text }]
+                }))
+            };
+        } else if (diskNote.content.format === 'tiptap') {
+            content = diskNote.content.doc;
+        }
+
         return {
             id: diskNote.noteId,
             title: diskNote.meta.title,
-            type: diskNote.meta.type,
-            status: diskNote.meta.status,
-            unresolved: diskNote.meta.unresolved,
-            universeTag: diskNote.meta.universeTag,
+            type: diskNote.meta.type || "General",
+            status: diskNote.meta.status || "Draft",
+            unresolved: diskNote.meta.unresolved || false,
+            universeTag: diskNote.meta.universeTag || null,
             folderId: 'unknown', 
             createdAt: diskNote.meta.createdAt,
             updatedAt: diskNote.meta.updatedAt,
-            content: diskNote.content.blocks.map(b => b.text).join('\n\n'), 
+            content: content,
             pinned: diskNote.meta.pinned || false,
-            excerpt: generateExcerpt(diskNote.content.blocks.map(b => b.text).join(' ')),
+            excerpt: generateExcerpt({ content: { doc: content } }),
             unresolvedSources: [],
             tag_ids: [],
             metadata: { kind: 'general', data: diskNote.properties.custom },
             system: diskNote.properties.system || {},
-            aiInterview: undefined
+            aiInterview: undefined,
+            content_plain: generateExcerpt({ content: { doc: content } }, 99999),
+            outbound_note_ids: [] 
         };
     } catch (e) {
         console.error("Failed to parse note JSON", e);
@@ -216,35 +255,91 @@ const parseNoteFromJSON = (jsonString: string): Note | null => {
 export class VaultService {
     private adapter: VaultAdapter | null = null;
     private workspaceCache: Workspace | null = null;
-    private creationMutex: Map<string, Promise<void>> = new Map();
+    private writeMutex: Map<string, Promise<void>> = new Map();
+
+    // --- Attachments ---
+    
+    async saveAttachment(noteId: string, file: File): Promise<string> {
+        if (!this.adapter) throw new Error("Vault not ready");
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const dir = join(ATTACHMENTS_DIR, noteId);
+        const path = join(dir, safeName);
+        await this.adapter.mkdir(dir, { recursive: true });
+        const buffer = await file.arrayBuffer();
+        await this.adapter.writeFile(path, new Uint8Array(buffer));
+        return path;
+    }
+
+    async getAttachmentUrl(path: string): Promise<string | null> {
+        if (!this.adapter) return null;
+        try {
+            const data = await this.adapter.readFile(path, 'binary');
+            const blob = new Blob([data as Uint8Array]);
+            return URL.createObjectURL(blob);
+        } catch (e) { return null; }
+    }
+
+    // --- Durability Helpers ---
+
+    private async acquireLock(path: string): Promise<() => void> {
+        while (this.writeMutex.has(path)) { await this.writeMutex.get(path); }
+        let resolveLock: () => void = () => {};
+        const lockPromise = new Promise<void>(resolve => { resolveLock = resolve; });
+        this.writeMutex.set(path, lockPromise);
+        return () => { this.writeMutex.delete(path); resolveLock(); };
+    }
+
+    private async safeReadJson<T>(filePath: string, fallback: T): Promise<T> {
+        if (!this.adapter) return fallback;
+        const release = await this.acquireLock(filePath);
+        try {
+            if (!(await this.adapter.exists(filePath))) return fallback;
+            const content = await this.adapter.readFile(filePath);
+            if (typeof content !== 'string' || content.trim() === '') return fallback;
+            return JSON.parse(content) as T;
+        } catch (e) { return fallback; } finally { release(); }
+    }
+
+    private async safeWriteJson(filePath: string, data: any) {
+        if (!this.adapter) return;
+        const release = await this.acquireLock(filePath);
+        try {
+            const content = JSON.stringify(data, null, 2);
+            const tempPath = filePath + '.tmp';
+            await this.adapter.writeFile(tempPath, content);
+            if (await this.adapter.exists(filePath)) await this.adapter.delete(filePath);
+            await this.adapter.move(tempPath, filePath);
+        } finally { release(); }
+    }
 
     // Debounced Config Savers
     public debouncedSaveSettings = debounce(async (data: SettingsData) => {
-        if (!this.adapter) return;
         data.updatedAt = Date.now();
-        await this.adapter.writeFile(join(METADATA_DIR, FILES.SETTINGS), JSON.stringify(data, null, 2));
+        await this.safeWriteJson(join(METADATA_DIR, FILES.SETTINGS), data);
     }, 500);
 
     public debouncedSaveTemplates = debounce(async (data: TemplatesData) => {
-        if (!this.adapter) return;
         data.updatedAt = Date.now();
-        await this.adapter.writeFile(join(METADATA_DIR, FILES.TEMPLATES), JSON.stringify(data, null, 2));
+        await this.safeWriteJson(join(METADATA_DIR, FILES.TEMPLATES), data);
     }, 500);
 
     public debouncedSaveHotkeys = debounce(async (data: HotkeysData) => {
-        if (!this.adapter) return;
         data.updatedAt = Date.now();
-        await this.adapter.writeFile(join(METADATA_DIR, FILES.HOTKEYS), JSON.stringify(data, null, 2));
+        await this.safeWriteJson(join(METADATA_DIR, FILES.HOTKEYS), data);
     }, 500);
 
     public debouncedSaveMaps = debounce(async (data: MapsData) => {
-        if (!this.adapter) return;
         data.updatedAt = Date.now();
-        await this.adapter.writeFile(join(METADATA_DIR, FILES.MAPS), JSON.stringify(data, null, 2));
+        await this.safeWriteJson(join(METADATA_DIR, FILES.MAPS), data);
+    }, 500);
+
+    public debouncedSaveCollections = debounce(async (data: CollectionsData) => {
+        data.updatedAt = Date.now();
+        await this.safeWriteJson(join(METADATA_DIR, FILES.COLLECTIONS), data);
     }, 500);
 
     // Debounced Note Save
-    private debouncedSaveNote = debounce(async (note: Note) => {
+    public debouncedSaveNote = debounce(async (note: Note) => {
         if (!this.adapter || !this.workspaceCache) return;
         
         const folder = this.workspaceCache.folders[note.folderId];
@@ -266,20 +361,13 @@ export class VaultService {
         }
         
         const path = join(folderName, fileName);
-        await this.adapter.writeFile(path, serializeNoteToJSON(note, folderName));
+        await this.safeWriteJson(path, JSON.parse(serializeNoteToJSON(note, folderName))); 
         
         if (!this.workspaceCache.indexes.note_files) this.workspaceCache.indexes.note_files = {};
         this.workspaceCache.indexes.note_files[note.id] = { fileName, folderPath: folderName };
 
-        if (!note.excerpt) note.excerpt = generateExcerpt(note.content || "");
+        if (!note.excerpt) note.excerpt = generateExcerpt(note.content);
         this.workspaceCache.notes[note.id] = note;
-
-        if (note.content) {
-            const links = extractLinkTitles(note.content);
-            for (const linkTitle of links) {
-                await this.createUnresolvedNote(linkTitle, note.id, note.title);
-            }
-        }
 
         this.debouncedSaveIndex(this.workspaceCache);
     }, 800); 
@@ -316,119 +404,72 @@ export class VaultService {
                 createdAt: note.createdAt,
                 updatedAt: note.updatedAt,
                 excerpt: note.excerpt || "",
-                folderId: note.folderId
+                folderId: note.folderId,
+                outboundLinks: note.outbound_note_ids 
             };
             indexData.notes[note.id] = entry;
         });
 
-        await this.adapter.writeFile(join(METADATA_DIR, FILES.INDEX), JSON.stringify(indexData, null, 2));
+        await this.safeWriteJson(join(METADATA_DIR, FILES.INDEX), indexData);
     }, 2000); 
 
-    // Metadata Save (Folders, Glossary, Legacy)
-    private debouncedSaveMetadata = debounce(async (ws: Workspace) => {
+    private async saveMetadataInternal(ws: Workspace) {
         if (!this.adapter) return;
-        const writeMeta = async (file: string, data: any) => {
-             await this.adapter!.writeFile(join(METADATA_DIR, file), JSON.stringify(data, null, 2));
-        };
         await Promise.all([
-            writeMeta(FILES.FOLDERS, ws.folders),
-            writeMeta(FILES.GLOSSARY, ws.glossary),
-            writeMeta(FILES.NOTIFICATIONS, ws.notificationLog),
+            this.safeWriteJson(join(METADATA_DIR, FILES.FOLDERS), ws.folders),
+            this.safeWriteJson(join(METADATA_DIR, FILES.GLOSSARY), ws.glossary),
+            this.safeWriteJson(join(METADATA_DIR, FILES.NOTIFICATIONS), ws.notificationLog),
         ]);
-    }, 3000);
+    }
 
-    // UI State Save
+    private debouncedSaveMetadata = debounce((ws: Workspace) => this.saveMetadataInternal(ws), 3000);
+
+    public async saveMetadataNow(ws: Workspace) {
+        await this.saveMetadataInternal(ws);
+    }
+
     public debouncedSaveUIState = debounce(async (uiState: UIState) => {
         if (!this.adapter) return;
         await this.adapter.mkdir(METADATA_DIR);
-        const data = JSON.stringify(uiState, null, 2);
-        await this.adapter.writeFile(join(METADATA_DIR, FILES.UI_STATE), data);
+        await this.safeWriteJson(join(METADATA_DIR, FILES.UI_STATE), uiState);
     }, 500);
 
-    // --- Unresolved Creation Logic ---
+    // --- Operations ---
+    
+    async createDirectory(path: string): Promise<boolean> {
+        if (!this.adapter) return false;
+        try {
+            await this.adapter.mkdir(path, { recursive: true });
+            return true;
+        } catch (e) { return false; }
+    }
 
-    private async createUnresolvedNote(targetTitle: string, sourceNoteId: string, sourceNoteTitle: string) {
-        if (!this.workspaceCache || !this.adapter) return;
+    async renameFolderOnDisk(folderId: string, newName: string): Promise<boolean> {
+        if (!this.workspaceCache || !this.adapter) return false;
+        const folder = this.workspaceCache.folders[folderId];
+        if (!folder || folder.type === 'system') return false;
 
-        const existingId = this.workspaceCache.indexes.title_to_note_id[targetTitle];
-        if (existingId) {
-            const existingNote = this.workspaceCache.notes[existingId];
-            if (existingNote && existingNote.unresolved) {
-                await this.ensureNoteContent(existingId);
-                const origins = existingNote.system?.unresolvedOrigins || [];
-                if (!origins.some((o: UnresolvedOrigin) => o.sourceNoteId === sourceNoteId)) {
-                    existingNote.system = {
-                        ...existingNote.system,
-                        unresolvedOrigins: [...origins, { sourceNoteId, sourceNoteTitle, createdAt: Date.now() }]
-                    };
-                    existingNote.updatedAt = Date.now();
-                    this.workspaceCache.notes[existingId] = existingNote;
-                    await this.debouncedSaveNote(existingNote);
-                    logNotification(this.workspaceCache, 'info', `Unresolved note "${targetTitle}" referenced again by "${sourceNoteTitle}"`, existingId);
-                    this.debouncedSaveMetadata(this.workspaceCache); 
-                }
+        const oldName = folder.name;
+        try {
+            if (await this.adapter.exists(oldName)) {
+                await this.adapter.renameDir(oldName, newName);
+            } else {
+                await this.adapter.mkdir(newName);
             }
-            return;
-        }
+            
+            folder.name = newName;
+            folder.updatedAt = Date.now();
+            
+            const notesInFolder = Object.values(this.workspaceCache.notes).filter(n => n.folderId === folderId);
+            notesInFolder.forEach(n => {
+                const fileInfo = this.workspaceCache!.indexes.note_files?.[n.id];
+                if (fileInfo) fileInfo.folderPath = newName;
+            });
 
-        const key = targetTitle.toLowerCase();
-        if (this.creationMutex.has(key)) return this.creationMutex.get(key);
-
-        const creationTask = (async () => {
-            try {
-                if (this.workspaceCache?.indexes.title_to_note_id[targetTitle]) return;
-
-                const newId = generateId();
-                const now = Date.now();
-                const folderName = SYSTEM_DIRS.UNRESOLVED;
-                await this.adapter!.mkdir(folderName, { recursive: true });
-
-                const newNote: Note = {
-                    id: newId,
-                    title: targetTitle,
-                    type: "General",
-                    status: "Draft",
-                    unresolved: true,
-                    unresolvedSources: [sourceNoteId],
-                    universeTag: null,
-                    folderId: SYSTEM_IDS.UNRESOLVED,
-                    createdAt: now,
-                    updatedAt: now,
-                    content: `# ${targetTitle}\n\nUnresolved link created from [[${sourceNoteTitle}]].`,
-                    excerpt: `Unresolved link created from ${sourceNoteTitle}.`,
-                    pinned: false,
-                    tag_ids: [],
-                    metadata: { kind: 'general', data: {} },
-                    system: { unresolvedOrigins: [{ sourceNoteId, sourceNoteTitle, createdAt: now }] }
-                };
-
-                const fileName = generateFileName(targetTitle, newId);
-                const path = join(folderName, fileName);
-                await this.adapter!.writeFile(path, serializeNoteToJSON(newNote, folderName));
-
-                if (this.workspaceCache) {
-                    this.workspaceCache.notes[newId] = newNote;
-                    this.workspaceCache.indexes.title_to_note_id[targetTitle] = newId;
-                    this.workspaceCache.indexes.unresolved_note_ids.push(newId);
-                    
-                    if (!this.workspaceCache.indexes.note_files) this.workspaceCache.indexes.note_files = {};
-                    this.workspaceCache.indexes.note_files[newId] = { fileName, folderPath: folderName };
-
-                    logNotification(this.workspaceCache, 'warning', `Created unresolved note: "${targetTitle}" from "${sourceNoteTitle}"`, newId);
-                    
-                    this.debouncedSaveIndex(this.workspaceCache);
-                    this.debouncedSaveMetadata(this.workspaceCache);
-                }
-
-            } catch (e) {
-                console.error(`Failed to create unresolved note: ${targetTitle}`, e);
-            } finally {
-                this.creationMutex.delete(key);
-            }
-        })();
-
-        this.creationMutex.set(key, creationTask);
-        await creationTask;
+            this.debouncedSaveMetadata(this.workspaceCache);
+            this.debouncedSaveIndex(this.workspaceCache);
+            return true;
+        } catch (e) { return false; }
     }
 
     // --- Init & Load ---
@@ -456,7 +497,7 @@ export class VaultService {
                 await this.adapter.init();
                 await this.ensureScaffold();
             }
-        } catch (e) { console.error("Picker cancelled/failed", e); throw e; }
+        } catch (e) { throw e; }
     }
 
     async useDemo(): Promise<void> {
@@ -468,59 +509,47 @@ export class VaultService {
     private async ensureScaffold() {
         if (!this.adapter) return;
         await this.adapter.mkdir(METADATA_DIR);
+        await this.adapter.mkdir(BACKUP_DIR);
         await this.adapter.mkdir(SYSTEM_DIRS.INBOX);
         await this.adapter.mkdir(SYSTEM_DIRS.UNRESOLVED);
         await this.adapter.mkdir(SYSTEM_DIRS.ARCHIVED);
+        await this.adapter.mkdir(ATTACHMENTS_DIR);
 
         if (!(await this.adapter.exists(join(METADATA_DIR, FILES.MANIFEST)))) {
-             await this.adapter.writeFile(join(METADATA_DIR, FILES.MANIFEST), JSON.stringify({
+             await this.safeWriteJson(join(METADATA_DIR, FILES.MANIFEST), {
                 schemaVersion: 1,
                 vaultId: generateId(),
                 createdAt: Date.now(),
                 app: { name: "Cosmic Records", formatVersion: 1 }
-            }, null, 2));
+            });
         }
         
-        // Ensure Configs Exist
-        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.SETTINGS)))) {
-            await this.adapter.writeFile(join(METADATA_DIR, FILES.SETTINGS), JSON.stringify(createDefaultSettings(), null, 2));
-        }
-        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.TEMPLATES)))) {
-            await this.adapter.writeFile(join(METADATA_DIR, FILES.TEMPLATES), JSON.stringify(createDefaultTemplates(), null, 2));
-        }
-        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.HOTKEYS)))) {
-            await this.adapter.writeFile(join(METADATA_DIR, FILES.HOTKEYS), JSON.stringify(createDefaultHotkeys(), null, 2));
-        }
-        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.MAPS)))) {
-            await this.adapter.writeFile(join(METADATA_DIR, FILES.MAPS), JSON.stringify(createDefaultMaps(), null, 2));
-        }
+        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.SETTINGS)))) await this.safeWriteJson(join(METADATA_DIR, FILES.SETTINGS), createDefaultSettings());
+        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.TEMPLATES)))) await this.safeWriteJson(join(METADATA_DIR, FILES.TEMPLATES), createDefaultTemplates());
+        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.HOTKEYS)))) await this.safeWriteJson(join(METADATA_DIR, FILES.HOTKEYS), createDefaultHotkeys());
+        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.MAPS)))) await this.safeWriteJson(join(METADATA_DIR, FILES.MAPS), createDefaultMaps());
+        if (!(await this.adapter.exists(join(METADATA_DIR, FILES.COLLECTIONS)))) await this.safeWriteJson(join(METADATA_DIR, FILES.COLLECTIONS), createDefaultCollections());
     }
 
     async loadWorkspace(): Promise<Workspace> {
         if (!this.adapter) throw new Error("No vault open");
 
-        const readMeta = async (file: string) => {
-            try {
-                const content = await this.adapter!.readFile(join(METADATA_DIR, file));
-                return typeof content === 'string' ? JSON.parse(content) : null;
-            } catch { return null; }
-        };
-
         const [
             manifest, indexData, foldersData, tagsData, glossaryData, 
-            settingsData, templatesData, hotkeysData, mapsData,
+            settingsData, templatesData, hotkeysData, mapsData, collectionsData,
             notificationsData
         ] = await Promise.all([
-            readMeta(FILES.MANIFEST),
-            readMeta(FILES.INDEX),
-            readMeta(FILES.FOLDERS),
-            readMeta(FILES.TAGS),
-            readMeta(FILES.GLOSSARY),
-            readMeta(FILES.SETTINGS),
-            readMeta(FILES.TEMPLATES),
-            readMeta(FILES.HOTKEYS),
-            readMeta(FILES.MAPS),
-            readMeta(FILES.NOTIFICATIONS),
+            this.safeReadJson<any>(join(METADATA_DIR, FILES.MANIFEST), {}),
+            this.safeReadJson<IndexData>(join(METADATA_DIR, FILES.INDEX), { schemaVersion: 1, updatedAt: 0, notes: {} }),
+            this.safeReadJson<any>(join(METADATA_DIR, FILES.FOLDERS), {}),
+            this.safeReadJson<any>(join(METADATA_DIR, FILES.TAGS), { tags: {} }),
+            this.safeReadJson<any>(join(METADATA_DIR, FILES.GLOSSARY), { terms: {}, extraction_queue: [] }),
+            this.safeReadJson<SettingsData>(join(METADATA_DIR, FILES.SETTINGS), createDefaultSettings()),
+            this.safeReadJson<TemplatesData>(join(METADATA_DIR, FILES.TEMPLATES), createDefaultTemplates()),
+            this.safeReadJson<HotkeysData>(join(METADATA_DIR, FILES.HOTKEYS), createDefaultHotkeys()),
+            this.safeReadJson<MapsData>(join(METADATA_DIR, FILES.MAPS), createDefaultMaps()),
+            this.safeReadJson<CollectionsData>(join(METADATA_DIR, FILES.COLLECTIONS), createDefaultCollections()),
+            this.safeReadJson<any>(join(METADATA_DIR, FILES.NOTIFICATIONS), []),
         ]);
 
         const defaultFolders = {
@@ -529,32 +558,22 @@ export class VaultService {
             [SYSTEM_IDS.ARCHIVED]: { id: SYSTEM_IDS.ARCHIVED, name: SYSTEM_DIRS.ARCHIVED, type: 'system', parentId: null, createdAt: 0, updatedAt: 0, order: 999 }
         };
 
-        // Legacy settings fallback
-        const prefs = settingsData?.ui || { theme: 'darkCosmos', reduceMotion: false };
-        const userPrefs = { 
-            ai: { proactive: true, allow_auto_edits: false, remember_preferences: true }, 
-            tts: { mode: "selected_text_only" }, 
-            ui: { gray_out_outdated_titles: true, show_badges_in_search: true, show_unresolved_prominently: true } 
-        };
-
         const ws: Workspace = {
             schema_version: "1.0",
             workspace_id: manifest?.vaultId || generateId(),
             name: "Cosmic Vault",
             notes: {},
             folders: { ...defaultFolders, ...(foldersData || {}) },
-            collections: {},
+            collections: collectionsData?.collections || {},
             pinnedNoteIds: [], 
             
-            // New Configs (Source of Truth)
-            settings: settingsData || createDefaultSettings(),
-            templates: templatesData || createDefaultTemplates(),
-            hotkeys: hotkeysData || createDefaultHotkeys(),
-            maps: mapsData || createDefaultMaps(),
+            settings: settingsData,
+            templates: templatesData,
+            hotkeys: hotkeysData,
+            maps: mapsData,
 
-            // Legacy
             tags: tagsData?.tags || {},
-            glossary: glossaryData || { terms: {}, extraction_queue: [] },
+            glossary: glossaryData,
             
             indexes: {
                 title_to_note_id: {},
@@ -565,15 +584,14 @@ export class VaultService {
             },
             notifications: {},
             notificationLog: notificationsData || [],
-            user_preferences: userPrefs as any, 
+            user_preferences: { ai: { proactive: true, allow_auto_edits: false, remember_preferences: true }, tts: { mode: "selected_text_only" }, ui: { gray_out_outdated_titles: true, show_badges_in_search: true, show_unresolved_prominently: true } }, 
 
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString()
         };
 
-        // --- Hydrate Workspace Notes from Index ---
-        if (indexData) {
-            const entries = (indexData as IndexData).notes;
+        if (indexData && indexData.notes) {
+            const entries = indexData.notes;
             Object.values(entries).forEach((entry: IndexEntry) => {
                 let folderId = entry.folderId;
                 if (!folderId) {
@@ -591,16 +609,27 @@ export class VaultService {
                     folderId: folderId,
                     createdAt: entry.createdAt,
                     updatedAt: entry.updatedAt,
-                    content: "", 
+                    content: { type: 'doc', content: [] }, 
                     pinned: entry.pinned,
                     excerpt: entry.excerpt,
                     unresolvedSources: [],
-                    tag_ids: []
+                    tag_ids: [],
+                    content_plain: entry.excerpt, 
+                    outbound_note_ids: entry.outboundLinks || []
                 };
-
+                
                 ws.notes[note.id] = note;
                 ws.indexes.title_to_note_id[note.title] = note.id;
                 ws.indexes.note_files![note.id] = { fileName: entry.fileName, folderPath: entry.folderPath };
+                
+                if (entry.outboundLinks) {
+                    entry.outboundLinks.forEach(targetId => {
+                        if (!ws.indexes.backlinks[targetId]) ws.indexes.backlinks[targetId] = [];
+                        if (!ws.indexes.backlinks[targetId].includes(note.id)) {
+                            ws.indexes.backlinks[targetId].push(note.id);
+                        }
+                    });
+                }
                 
                 if (note.pinned) ws.pinnedNoteIds.push(note.id);
                 if (note.unresolved) ws.indexes.unresolved_note_ids.push(note.id);
@@ -612,49 +641,107 @@ export class VaultService {
     }
 
     async loadUIState(): Promise<UIState | null> {
-        if (!this.adapter) return null;
-        try {
-            const content = await this.adapter.readFile(join(METADATA_DIR, FILES.UI_STATE));
-            return typeof content === 'string' ? JSON.parse(content) : null;
-        } catch { return null; }
+        return this.safeReadJson<UIState>(join(METADATA_DIR, FILES.UI_STATE), null as any);
     }
 
-    async ensureNoteContent(noteId: string): Promise<string> {
-        if (!this.workspaceCache || !this.adapter) return "";
+    async ensureNoteContent(noteId: string): Promise<any> {
+        if (!this.workspaceCache) return null;
         const note = this.workspaceCache.notes[noteId];
-        if (!note) return "";
-        if (note.content && note.content.length > 0) return note.content;
-        
+        if (!note) return null;
+        if (note.content && note.content.content && note.content.content.length > 0) return note.content;
+
         const fileInfo = this.workspaceCache.indexes.note_files?.[noteId];
-        if (!fileInfo) return "";
+        if (!fileInfo) return note.content;
 
         const path = join(fileInfo.folderPath, fileInfo.fileName);
         try {
-            const text = await this.adapter.readFile(path);
-            if (typeof text === 'string') {
-                const parsed = parseNoteFromJSON(text);
+            const raw = await this.adapter?.readFile(path);
+            if (typeof raw === 'string') {
+                const parsed = parseNoteFromJSON(raw);
                 if (parsed) {
                     note.content = parsed.content;
-                    note.metadata = parsed.metadata;
-                    note.universeTag = parsed.universeTag;
-                    note.pinned = parsed.pinned;
-                    note.system = parsed.system; 
-                    return parsed.content;
+                    this.workspaceCache.notes[noteId] = note;
                 }
             }
-        } catch (e) {
-            console.warn(`Could not read/parse note ${noteId} at ${path}`, e);
-        }
-        return "";
+        } catch(e) { /* ignore */ }
+        return note.content;
     }
 
-    async rebuildIndex(ws: Workspace): Promise<void> {
-        if (!this.adapter) return;
-        // Rebuild logic placeholder
+    async rebuildIndex(): Promise<void> {
+        if (!this.adapter || !this.workspaceCache) return;
+        
+        const indexData: IndexData = {
+            schemaVersion: 1,
+            updatedAt: Date.now(),
+            notes: {}
+        };
+        
+        const notes: Record<string, Note> = {};
+        const noteFiles: Record<string, { fileName: string, folderPath: string }> = {};
+        const titleMap: Record<string, string> = {};
+        const backlinks: Record<string, string[]> = {};
+
+        const scan = async (dir: string) => {
+            const entries = await this.adapter!.listDir(dir);
+            for(const e of entries) {
+                if (e.kind === 'dir' && e.name !== METADATA_DIR && e.name !== ATTACHMENTS_DIR) {
+                    await scan(e.path);
+                } else if (e.kind === 'file' && e.name.endsWith('.json')) {
+                    try {
+                        const content = await this.adapter!.readFile(e.path);
+                        const note = parseNoteFromJSON(content as string);
+                        if (note) {
+                            notes[note.id] = note;
+                            noteFiles[note.id] = { fileName: e.name, folderPath: dir };
+                            titleMap[note.title] = note.id;
+
+                            const folder = Object.values(this.workspaceCache!.folders).find(f => f.name === dir);
+                            note.folderId = folder ? folder.id : 'inbox';
+
+                            const outbound = extractOutboundLinks(note.content);
+                            note.outbound_note_ids = outbound;
+                            outbound.forEach(tid => {
+                                if (!backlinks[tid]) backlinks[tid] = [];
+                                backlinks[tid].push(note.id);
+                            });
+
+                            indexData.notes[note.id] = {
+                                noteId: note.id,
+                                filePath: e.path,
+                                folderPath: dir,
+                                fileName: e.name,
+                                title: note.title,
+                                type: note.type,
+                                status: note.status,
+                                unresolved: note.unresolved,
+                                universeTag: note.universeTag,
+                                tags: [],
+                                pinned: note.pinned,
+                                createdAt: note.createdAt,
+                                updatedAt: note.updatedAt,
+                                excerpt: note.excerpt || "",
+                                folderId: note.folderId,
+                                outboundLinks: outbound
+                            };
+                        }
+                    } catch (err) { /* ignore */ }
+                }
+            }
+        };
+
+        await scan('.');
+
+        this.workspaceCache.notes = notes;
+        this.workspaceCache.indexes.note_files = noteFiles;
+        this.workspaceCache.indexes.title_to_note_id = titleMap;
+        this.workspaceCache.indexes.backlinks = backlinks;
+        this.workspaceCache.indexes.unresolved_note_ids = Object.values(notes).filter(n => n.unresolved).map(n => n.id);
+
+        await this.safeWriteJson(join(METADATA_DIR, FILES.INDEX), indexData);
     }
 
-    async refresh(): Promise<Workspace> {
-        return this.loadWorkspace();
+    async resyncVault(mode: 'fast' | 'full'): Promise<void> {
+        await this.rebuildIndex();
     }
 
     onNoteChange(note: Note) {
@@ -677,6 +764,7 @@ export class VaultService {
         this.debouncedSaveTemplates(ws.templates);
         this.debouncedSaveHotkeys(ws.hotkeys);
         this.debouncedSaveMaps(ws.maps);
+        this.debouncedSaveCollections({ schemaVersion: 1, updatedAt: Date.now(), collections: ws.collections });
     }
 }
 

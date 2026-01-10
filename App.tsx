@@ -59,7 +59,7 @@ const App: React.FC = () => {
                   
                   if (uiState) {
                       let missingCount = 0;
-                      Object.values(uiState.paneSystem.panes).forEach(pane => {
+                      Object.values(uiState.paneSystem.panes).forEach((pane: PaneState) => {
                           pane.tabs = pane.tabs.map(tab => {
                               if (tab.kind === 'note') {
                                   const noteTab = tab as NoteTab;
@@ -172,16 +172,17 @@ const App: React.FC = () => {
 
           if (match) {
               e.preventDefault();
-              switch(match.command) {
-                  case 'note.new':
-                      setCreationTargetFolderId('inbox');
-                      setIsCreationModalOpen(true);
-                      break;
-                  case 'tab.close':
-                      // Logic handled in PaneSystem via dedicated hook, but global dispatch could go here if centralized
-                      break;
-                  // Add other global commands here if not handled locally by focused elements
+              
+              // Global App Commands
+              if (match.command === 'note.new') {
+                  setCreationTargetFolderId('inbox');
+                  setIsCreationModalOpen(true);
+                  return;
               }
+              
+              // Dispatch to focused editor or other components
+              const event = new CustomEvent('app-command', { detail: { command: match.command } });
+              window.dispatchEvent(event);
           }
       };
       window.addEventListener('keydown', handleGlobalKeyDown);
@@ -219,9 +220,9 @@ const App: React.FC = () => {
       setIsCreationModalOpen(true);
   };
 
-  const handleCreateNoteConfirm = (type: string, method: 'blank' | 'ai') => {
+  const handleCreateNoteConfirm = (options: any) => {
       if (!workspace) return;
-      const newNote = createNote(workspace, "New Record", type, method, creationTargetFolderId);
+      const newNote = createNote(workspace, options);
       
       // Update local state
       setWorkspace({ ...workspace }); 
@@ -255,11 +256,8 @@ const App: React.FC = () => {
   const handleOpenNote = (id: string) => {
       const note = workspace.notes[id];
       if (note) {
-          vaultService.ensureNoteContent(id).then(content => {
-              if (note.content !== content) {
-                   setWorkspace(prev => prev ? ({...prev, notes: {...prev.notes, [id]: {...note, content}}}) : null);
-              }
-          });
+          // NOTE: We do NOT force load content here anymore. NoteEditor handles lazy load on mount.
+          // This keeps open fast and UI responsive.
           paneSystem.openNoteTab(id, note.title);
       } else {
           paneSystem.openNoteTab(id, "Unresolved Link");

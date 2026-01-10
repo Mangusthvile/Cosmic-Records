@@ -33,6 +33,7 @@ export interface VaultAdapter {
     mkdir(path: string, options?: MkdirOptions): Promise<void>;
     
     move(from: string, to: string): Promise<void>;
+    renameDir(oldPath: string, newPath: string): Promise<void>;
     delete(path: string): Promise<void>;
     exists(path: string): Promise<boolean>;
 }
@@ -110,10 +111,13 @@ export class FileSystemAccessAdapter implements VaultAdapter {
         const entries: DirEntry[] = [];
         // @ts-ignore - iterate entries
         for await (const [name, entry] of handle.entries()) {
+            const file = entry.kind === 'file' ? await (entry as FileSystemFileHandle).getFile() : null;
             entries.push({
                 name: name,
                 path: join(path, name),
-                kind: entry.kind === 'directory' ? 'dir' : 'file'
+                kind: entry.kind === 'directory' ? 'dir' : 'file',
+                size: file ? file.size : undefined,
+                modifiedAt: file ? file.lastModified : undefined
             });
         }
         return entries;
@@ -124,7 +128,7 @@ export class FileSystemAccessAdapter implements VaultAdapter {
     }
 
     async move(from: string, to: string): Promise<void> {
-        // Simple copy-delete implementation for MVP as move() isn't fully supported across dirs in all browsers yet
+        // Copy-delete for file
         const srcHandle = await this.resolveHandle(from, false, 'file') as FileSystemFileHandle;
         if (!srcHandle) throw new Error(`Source not found: ${from}`);
         
@@ -133,6 +137,31 @@ export class FileSystemAccessAdapter implements VaultAdapter {
         
         await this.writeFile(to, new Uint8Array(data));
         await this.delete(from);
+    }
+
+    async renameDir(oldPath: string, newPath: string): Promise<void> {
+        // Recursive copy-delete for directory
+        const copyRecursive = async (src: string, dest: string) => {
+            await this.mkdir(dest);
+            const entries = await this.listDir(src);
+            for (const entry of entries) {
+                const destPath = join(dest, entry.name);
+                if (entry.kind === 'file') {
+                    await this.move(entry.path, destPath);
+                } else {
+                    await copyRecursive(entry.path, destPath);
+                }
+            }
+        };
+
+        // Check source existence
+        if (!(await this.exists(oldPath))) throw new Error(`Source dir not found: ${oldPath}`);
+        
+        // Check dest existence (fail if exists to be safe)
+        if (await this.exists(newPath)) throw new Error(`Destination dir already exists: ${newPath}`);
+
+        await copyRecursive(oldPath, newPath);
+        await this.delete(oldPath);
     }
 
     async delete(path: string): Promise<void> {
@@ -204,7 +233,8 @@ export class IndexedDbAdapter implements VaultAdapter {
                         name: relative,
                         path: entry.path,
                         kind: entry.kind,
-                        modifiedAt: entry.modifiedAt
+                        modifiedAt: entry.modifiedAt,
+                        size: entry.data ? entry.data.length : 0
                     });
                 } else {
                     // Subdirectory representative (virtual folder if explicit dir record missing)
@@ -247,20 +277,38 @@ export class IndexedDbAdapter implements VaultAdapter {
             await putEntry({ ...entry, path: normalize(to) });
             await deleteEntry(normalize(from));
         } else {
-            // Move Dir (Recursive)
-            const all = await getAllEntries();
-            const prefix = normalize(from) + '/';
-            for (const e of all) {
-                if (e.path.startsWith(prefix)) {
-                    const suffix = e.path.substring(prefix.length);
-                    const newPath = join(to, suffix);
-                    await putEntry({ ...e, path: newPath });
-                    await deleteEntry(e.path);
-                }
+            throw new Error("Use renameDir for directories");
+        }
+    }
+
+    async renameDir(oldPath: string, newPath: string): Promise<void> {
+        // Recursive rename in IDB
+        const all = await getAllEntries();
+        const prefix = normalize(oldPath) + '/';
+        const newPrefix = normalize(newPath) + '/';
+
+        // Check if destination exists (shallow check)
+        const destExists = await getEntry(normalize(newPath));
+        if (destExists) throw new Error("Destination directory exists");
+
+        // Move children
+        for (const e of all) {
+            if (e.path.startsWith(prefix)) {
+                const suffix = e.path.substring(prefix.length);
+                const target = newPrefix + suffix;
+                await putEntry({ ...e, path: target });
+                await deleteEntry(e.path);
             }
-            // Move the dir entry itself
-            await putEntry({ ...entry, path: normalize(to) });
-            await deleteEntry(normalize(from));
+        }
+        
+        // Move directory entry itself
+        const dirEntry = await getEntry(normalize(oldPath));
+        if (dirEntry) {
+            await putEntry({ ...dirEntry, path: normalize(newPath) });
+            await deleteEntry(normalize(oldPath));
+        } else {
+             // Virtual directory created by children, just ensure new one exists
+             await putEntry({ path: normalize(newPath), kind: 'dir', modifiedAt: Date.now() });
         }
     }
 

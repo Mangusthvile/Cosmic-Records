@@ -3,6 +3,7 @@ import React from 'react';
 import { Workspace, Note, UnresolvedOrigin } from '../types';
 import { Link2, AlertTriangle, ArrowRight, X } from 'lucide-react';
 import { extractLinkTitles } from '../services/linkService';
+import { noteContentToPlainText } from '../services/vaultService';
 
 interface BacklinksPanelProps {
     currentNote: Note | null;
@@ -29,7 +30,8 @@ const BacklinksPanel: React.FC<BacklinksPanelProps> = ({ currentNote, workspace,
     const origins = (currentNote.system?.unresolvedOrigins || []) as UnresolvedOrigin[];
 
     // 3. Outgoing Unresolved Links (If this note points to unresolved stuff)
-    const outgoingTitles = extractLinkTitles(currentNote.content || "");
+    const plainText = noteContentToPlainText(currentNote);
+    const outgoingTitles = extractLinkTitles(plainText);
     const unresolvedOutgoing = outgoingTitles
         .map(t => {
             const id = workspace.indexes.title_to_note_id[t];

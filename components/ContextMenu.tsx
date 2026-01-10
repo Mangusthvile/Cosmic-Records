@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef } from 'react';
 
 export interface ContextMenuItem {
@@ -7,6 +8,7 @@ export interface ContextMenuItem {
     disabled?: boolean;
     danger?: boolean;
     separator?: boolean;
+    subMenu?: ContextMenuItem[]; 
 }
 
 interface ContextMenuProps {
@@ -37,10 +39,10 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
         };
     }, [onClose]);
 
-    // Simple boundary checking (clamping) could be added here if needed
+    // Simple boundary checking
     const style: React.CSSProperties = {
-        top: y,
-        left: x,
+        top: Math.min(y, window.innerHeight - 300), 
+        left: Math.min(x, window.innerWidth - 200),
     };
 
     return (
@@ -55,6 +57,12 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ x, y, items, onClose }) => {
                 }
                 
                 const Icon = item.icon;
+                
+                // Simple sub-menu handling could be recursive but keeping flat for now or simple nesting logic 
+                // For MVP, if subMenu exists, we might need a more complex component.
+                // Assuming simple flat menu for now as per previous, but "Add to Collection" might need a submenu later.
+                // For now, let's keep it simple.
+
                 return (
                     <button
                         key={index}

@@ -1,11 +1,12 @@
 
 import { 
   Workspace, Note, NoteType, NoteStatus, 
-  NoteMetadata, CharacterMeta, PlaceMeta, GeneralMeta,
-  ID, RichDoc, UserPreferences, GlossaryTerm, UniverseTag, Folder, Collection,
-  NotificationLogItem
+  ID, UserPreferences, GlossaryTerm, UniverseTag, Folder, Collection,
+  NotificationLogItem,
+  CollectionsData
 } from "../types";
-import { parseWikiLinks, rewriteLinks, extractLinkTitles } from "./linkService";
+import { parseWikiLinks, extractLinkTitles, extractOutboundLinks } from "./linkService";
+import { vaultService, noteContentToPlainText } from "./vaultService";
 
 const generateId = (): string => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
@@ -23,39 +24,6 @@ const createDefaultPreferences = (): UserPreferences => ({
   ui: { gray_out_outdated_titles: true, show_badges_in_search: true, show_unresolved_prominently: true }
 });
 
-const SYSTEM_FOLDERS: Record<ID, Folder> = {
-    'inbox': { id: 'inbox', name: 'Inbox', type: 'system', parentId: null, createdAt: 0, updatedAt: 0, order: 0 },
-    'unresolved': { id: 'unresolved', name: 'Unresolved', type: 'system', parentId: null, createdAt: 0, updatedAt: 0, order: 1 },
-    'archived': { id: 'archived', name: 'Archived', type: 'system', parentId: null, createdAt: 0, updatedAt: 0, order: 999 }
-};
-
-// --- Helpers for Indexes ---
-
-const rebuildBacklinks = (workspace: Workspace) => {
-    const backlinks: Record<ID, ID[]> = {};
-    
-    // Initialize
-    Object.keys(workspace.notes).forEach(id => backlinks[id] = []);
-
-    // Scan all notes
-    Object.values(workspace.notes).forEach(sourceNote => {
-        const titles = extractLinkTitles(sourceNote.content || "");
-        titles.forEach(title => {
-            const targetId = workspace.indexes.title_to_note_id[title];
-            if (targetId) {
-                if (!backlinks[targetId]) backlinks[targetId] = [];
-                if (!backlinks[targetId].includes(sourceNote.id)) {
-                    backlinks[targetId].push(sourceNote.id);
-                }
-            }
-        });
-    });
-
-    workspace.indexes.backlinks = backlinks;
-};
-
-// --- Notification Logging ---
-
 export const logNotification = (
     workspace: Workspace, 
     type: NotificationLogItem['type'], 
@@ -70,11 +38,8 @@ export const logNotification = (
         relatedNoteId,
         read: false
     };
-    // Prepend to log
-    workspace.notificationLog = [logItem, ...workspace.notificationLog].slice(0, 100); // Keep last 100
+    workspace.notificationLog = [logItem, ...workspace.notificationLog].slice(0, 100); 
 };
-
-// --- Core Note Logic ---
 
 export const getUniqueTitle = (workspace: Workspace, baseTitle: string, excludeId?: string): string => {
     let title = baseTitle;
@@ -88,15 +53,12 @@ export const getUniqueTitle = (workspace: Workspace, baseTitle: string, excludeI
     return title;
 };
 
-// --- Unresolved & Linking Logic ---
+// --- Unresolved Logic ---
 
-const ensureUnresolvedNote = (workspace: Workspace, title: string, sourceNoteId: string): ID => {
-    // Check if exists
+export const ensureUnresolvedNote = (workspace: Workspace, title: string, sourceNoteId: string): ID => {
     if (workspace.indexes.title_to_note_id[title]) {
         const existingId = workspace.indexes.title_to_note_id[title];
-        // Append source if not already there
         const note = workspace.notes[existingId];
-        // Note: note could be a shell, we just update metadata here safely
         if (note.unresolvedSources && !note.unresolvedSources.includes(sourceNoteId)) {
             note.unresolvedSources.push(sourceNoteId);
         } else if (!note.unresolvedSources) {
@@ -105,9 +67,17 @@ const ensureUnresolvedNote = (workspace: Workspace, title: string, sourceNoteId:
         return existingId;
     }
 
-    // Create new unresolved note
     const id = generateId();
     const now = Date.now();
+    
+    const initialContent = {
+        type: 'doc',
+        content: [
+            { type: 'heading', attrs: { level: 1 }, content: [{ type: 'text', text: title }] },
+            { type: 'paragraph', content: [{ type: 'text', text: `Unresolved link created from [[${workspace.notes[sourceNoteId]?.title || 'Unknown source'}]].` }] }
+        ]
+    };
+
     const note: Note = {
         id,
         title,
@@ -119,7 +89,7 @@ const ensureUnresolvedNote = (workspace: Workspace, title: string, sourceNoteId:
         folderId: 'unresolved',
         createdAt: now,
         updatedAt: now,
-        content: `Unresolved link created from [[${workspace.notes[sourceNoteId]?.title || 'Unknown source'}]].`,
+        content: initialContent,
         pinned: false,
         tag_ids: [],
         metadata: { kind: 'general', data: {} }
@@ -129,7 +99,7 @@ const ensureUnresolvedNote = (workspace: Workspace, title: string, sourceNoteId:
     workspace.indexes.title_to_note_id[title] = id;
     workspace.indexes.unresolved_note_ids.push(id);
     
-    // LOG IT
+    vaultService.onNoteChange(note);
     logNotification(workspace, 'warning', `Unresolved note created: ${title}`, id);
 
     return id;
@@ -137,69 +107,81 @@ const ensureUnresolvedNote = (workspace: Workspace, title: string, sourceNoteId:
 
 const scanContentAndCreateUnresolved = (workspace: Workspace, noteId: string) => {
     const note = workspace.notes[noteId];
-    if (!note || !note.content) return; // Skip if content not loaded or empty
-
-    const linkedTitles = extractLinkTitles(note.content || "");
-    
+    if (!note) return; 
+    const text = noteContentToPlainText(note);
+    const linkedTitles = extractLinkTitles(text);
     linkedTitles.forEach(title => {
         ensureUnresolvedNote(workspace, title, noteId);
     });
 };
 
 const handleRename = (workspace: Workspace, note: Note, oldTitle: string) => {
-    // 1. Rewrite links in ALL notes
-    // Optimization: This requires full scan. For large vaults, this is expensive. 
-    // In persisted index milestone, we should only do this if users explicitly want it or handle it lazily?
-    // For now, we iterate `workspace.notes`. Since many are shells, we check `content` presence.
-    // If content is missing, we skip rewriting. This is a limitation of lazy loading without server-side search.
-    // Ideally, we'd flag them as "needs link update" or load them.
-    // MVP: Only update loaded notes.
-    Object.values(workspace.notes).forEach(n => {
-        if (!n.content) return; 
-        const newContent = rewriteLinks(n.content, oldTitle, note.title);
-        if (newContent !== n.content) {
-            n.content = newContent;
-            n.content_plain = newContent; 
-            n.updatedAt = Date.now();
+    if (workspace.indexes.title_to_note_id[oldTitle] === note.id) {
+        delete workspace.indexes.title_to_note_id[oldTitle];
+    }
+    workspace.indexes.title_to_note_id[note.title] = note.id;
+    logNotification(workspace, 'success', `Renamed: "${oldTitle}" → "${note.title}"`, note.id);
+};
+
+const updateLinkGraph = (workspace: Workspace, note: Note) => {
+    const newOutbound = extractOutboundLinks(note.content, (t) => workspace.indexes.title_to_note_id[t]);
+    const oldOutbound = note.outbound_note_ids || [];
+    
+    oldOutbound.forEach(targetId => {
+        if (workspace.indexes.backlinks[targetId]) {
+            workspace.indexes.backlinks[targetId] = workspace.indexes.backlinks[targetId].filter(id => id !== note.id);
         }
     });
 
-    // 2. Update Index
-    delete workspace.indexes.title_to_note_id[oldTitle];
-    workspace.indexes.title_to_note_id[note.title] = note.id;
+    newOutbound.forEach(targetId => {
+        if (!workspace.indexes.backlinks[targetId]) workspace.indexes.backlinks[targetId] = [];
+        if (!workspace.indexes.backlinks[targetId].includes(note.id)) {
+            workspace.indexes.backlinks[targetId].push(note.id);
+        }
+    });
+
+    note.outbound_note_ids = newOutbound;
 };
 
-// --- Public Operations ---
+// --- Note CRUD ---
+
+interface CreateNoteOptions {
+    title?: string;
+    type?: string;
+    status?: NoteStatus;
+    folderId?: string;
+    universeTag?: string | null;
+    method?: 'blank' | 'ai';
+}
 
 export const createNote = (
     workspace: Workspace, 
-    baseTitle: string = "New Note", 
-    type: string = "General", 
-    method: 'blank' | 'ai' = 'blank',
-    targetFolderId: string = 'inbox'
+    options: CreateNoteOptions = {}
 ): Note => {
     const id = generateId();
+    const baseTitle = options.title || "New Record";
     const title = getUniqueTitle(workspace, baseTitle);
     const now = Date.now();
 
     const note: Note = {
         id,
         title,
-        type,
-        status: "Draft",
+        type: options.type || "General",
+        status: options.status || "Draft",
         unresolved: false,
         unresolvedSources: [],
-        universeTag: null,
-        folderId: targetFolderId,
+        universeTag: options.universeTag || null,
+        folderId: options.folderId || 'inbox',
         createdAt: now,
         updatedAt: now,
-        content: "",
+        content: { type: 'doc', content: [] },
         pinned: false,
         tag_ids: [],
-        metadata: { kind: 'general', data: {} } 
+        metadata: { kind: 'general', data: {} },
+        outbound_note_ids: []
     };
 
-    if (method === 'ai') {
+    if (options.method === 'ai') {
         note.aiInterview = {
             isActive: true,
             step: 'start',
@@ -210,12 +192,9 @@ export const createNote = (
 
     workspace.notes[id] = note;
     workspace.indexes.title_to_note_id[note.title] = id;
-    
-    // Initial backlinks build is empty for new note
     workspace.indexes.backlinks[id] = [];
     
-    // LOG IT
-    logNotification(workspace, 'system', `Created new note: ${title}`, id);
+    logNotification(workspace, 'system', `Created ${note.type} note: ${title}`, id);
 
     return note;
 };
@@ -223,41 +202,56 @@ export const createNote = (
 export const updateNote = (workspace: Workspace, note: Note): Workspace => {
     const oldNote = workspace.notes[note.id];
     
-    // 1. Rename Safety
     if (oldNote && oldNote.title !== note.title) {
-        // Enforce uniqueness again to be safe
-        note.title = getUniqueTitle(workspace, note.title, note.id);
+        const originalTitle = note.title.trim();
+        let finalTitle = originalTitle || "Untitled Record";
+        finalTitle = getUniqueTitle(workspace, finalTitle, note.id);
+        
+        if (finalTitle !== originalTitle) {
+             logNotification(workspace, 'warning', `Title adjusted to keep unique: ${finalTitle}`, note.id);
+        }
+        note.title = finalTitle;
         handleRename(workspace, note, oldNote.title);
-        logNotification(workspace, 'info', `Renamed note from "${oldNote.title}" to "${note.title}"`, note.id);
     }
 
-    // 2. Status Change Logging
     if (oldNote && oldNote.status !== note.status) {
         logNotification(workspace, 'statusChange', `Status changed: ${oldNote.status} -> ${note.status}`, note.id);
     }
 
-    // 3. Unresolved Folder Logic
-    if (note.unresolved && note.folderId !== 'unresolved') {
-        note.folderId = 'unresolved';
-    } 
+    if (note.unresolved && !workspace.indexes.unresolved_note_ids.includes(note.id)) {
+        workspace.indexes.unresolved_note_ids.push(note.id);
+    } else if (!note.unresolved && workspace.indexes.unresolved_note_ids.includes(note.id)) {
+        workspace.indexes.unresolved_note_ids = workspace.indexes.unresolved_note_ids.filter(id => id !== note.id);
+    }
 
     note.updatedAt = Date.now();
+    note.content_plain = noteContentToPlainText(note);
+    updateLinkGraph(workspace, note);
     workspace.notes[note.id] = note;
-    note.content_plain = note.content; 
-
-    // 4. Scan for Links (Auto-create unresolved)
     scanContentAndCreateUnresolved(workspace, note.id);
-
-    // 5. Rebuild Backlinks
-    // Only rebuild if content loaded and changed
-    if (oldNote && note.content && (oldNote.content !== note.content || oldNote.title !== note.title)) {
-        rebuildBacklinks(workspace);
-    }
 
     return { ...workspace };
 };
 
+export const resolveNote = (workspace: Workspace, noteId: string): Workspace => {
+    const note = workspace.notes[noteId];
+    if (!note) return workspace;
+    note.unresolved = false;
+    note.updatedAt = Date.now();
+    workspace.indexes.unresolved_note_ids = workspace.indexes.unresolved_note_ids.filter(id => id !== noteId);
+    vaultService.onNoteChange(note);
+    logNotification(workspace, 'success', `Resolved note: ${note.title}`, noteId);
+    return { ...workspace };
+};
+
 // --- Folder Management ---
+
+const getFolderPath = (workspace: Workspace, folderId: string): string => {
+    const folder = workspace.folders[folderId];
+    if (!folder) return '';
+    const parentPath = folder.parentId ? getFolderPath(workspace, folder.parentId) : '';
+    return parentPath ? `${parentPath}/${folder.name}` : folder.name;
+};
 
 export const createFolder = (workspace: Workspace, name: string, parentId: string | null = null): ID => {
     const id = generateId();
@@ -279,30 +273,29 @@ export const createFolder = (workspace: Workspace, name: string, parentId: strin
         updatedAt: now,
         order: siblings.length
     };
+
+    const fullPath = getFolderPath(workspace, id);
+    vaultService.createDirectory(fullPath);
+    vaultService.saveMetadataNow(workspace);
+
     return id;
 };
 
 export const renameFolder = (workspace: Workspace, folderId: string, newName: string): boolean => {
     const folder = workspace.folders[folderId];
     if (!folder || folder.type === 'system') return false;
-
     const siblings = Object.values(workspace.folders).filter(f => f.parentId === folder.parentId && f.id !== folderId);
     if (siblings.some(f => f.name === newName)) return false; 
-
-    folder.name = newName;
-    folder.updatedAt = Date.now();
-    return true;
+    vaultService.renameFolderOnDisk(folderId, newName);
+    return true; 
 };
 
 export const deleteFolder = (workspace: Workspace, folderId: string): boolean => {
     const folder = workspace.folders[folderId];
     if (!folder || folder.type === 'system') return false;
-
     const childFolders = Object.values(workspace.folders).some(f => f.parentId === folderId);
     const childNotes = Object.values(workspace.notes).some(n => n.folderId === folderId);
-
     if (childFolders || childNotes) return false;
-
     delete workspace.folders[folderId];
     return true;
 };
@@ -315,11 +308,70 @@ export const moveNote = (workspace: Workspace, noteId: string, targetFolderId: s
     }
 };
 
+// --- Collections Management ---
+
+export const createCollection = (workspace: Workspace, name: string): ID => {
+    const id = generateId();
+    const collection: Collection = {
+        id,
+        name,
+        noteIds: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+    };
+    workspace.collections[id] = collection;
+    vaultService.debouncedSaveCollections({ 
+        schemaVersion: 1, 
+        updatedAt: Date.now(), 
+        collections: workspace.collections 
+    });
+    return id;
+};
+
+export const deleteCollection = (workspace: Workspace, collectionId: string) => {
+    if (workspace.collections[collectionId]) {
+        delete workspace.collections[collectionId];
+        vaultService.debouncedSaveCollections({ 
+            schemaVersion: 1, 
+            updatedAt: Date.now(), 
+            collections: workspace.collections 
+        });
+    }
+};
+
+export const addToCollection = (workspace: Workspace, collectionId: string, noteId: string) => {
+    const collection = workspace.collections[collectionId];
+    if (collection && !collection.noteIds.includes(noteId)) {
+        collection.noteIds.push(noteId);
+        collection.updatedAt = Date.now();
+        vaultService.debouncedSaveCollections({ 
+            schemaVersion: 1, 
+            updatedAt: Date.now(), 
+            collections: workspace.collections 
+        });
+        logNotification(workspace, 'info', `Added note to collection: ${collection.name}`, noteId);
+    }
+};
+
+export const removeFromCollection = (workspace: Workspace, collectionId: string, noteId: string) => {
+    const collection = workspace.collections[collectionId];
+    if (collection) {
+        collection.noteIds = collection.noteIds.filter(id => id !== noteId);
+        collection.updatedAt = Date.now();
+        vaultService.debouncedSaveCollections({ 
+            schemaVersion: 1, 
+            updatedAt: Date.now(), 
+            collections: workspace.collections 
+        });
+    }
+};
+
+// --- Misc ---
+
 export const togglePin = (workspace: Workspace, noteId: string) => {
     const note = workspace.notes[noteId];
     if (note) {
         note.pinned = !note.pinned;
-        // Sync legacy array for safety
         if (note.pinned && !workspace.pinnedNoteIds.includes(noteId)) {
             workspace.pinnedNoteIds.push(noteId);
         } else {
@@ -328,14 +380,14 @@ export const togglePin = (workspace: Workspace, noteId: string) => {
     }
 };
 
-export const parseLinksAndUpdateWorkspace = (workspace: Workspace, sourceNoteId: string, content: string): Workspace => {
-    const note = workspace.notes[sourceNoteId];
-    if (note) {
-        note.content = content;
-        note.content_plain = content;
-        scanContentAndCreateUnresolved(workspace, sourceNoteId);
+export const clearUnresolvedOrigins = (workspace: Workspace, noteId: string) => {
+    const note = workspace.notes[noteId];
+    if (note && note.system) {
+        note.system.unresolvedOrigins = [];
+        note.updatedAt = Date.now();
+        vaultService.onNoteChange(note); 
+        logNotification(workspace, 'info', `Cleared origins for note: ${note.title}`, noteId);
     }
-    return { ...workspace };
 };
 
 export const createGlossaryTerm = (workspace: Workspace, term: string, definition: string): ID => {
@@ -352,18 +404,4 @@ export const createGlossaryTerm = (workspace: Workspace, term: string, definitio
         updated_at: new Date().toISOString()
     };
     return id;
-};
-
-export const createTag = (workspace: Workspace, tagName: string): ID => {
-    const id = generateId();
-    workspace.tags[id] = { id, name: tagName, color: null, created_at: new Date().toISOString() };
-    return id;
-};
-
-export const createUniverseTag = (workspace: Workspace, name: string): ID => {
-    // Check if exists in settings
-    if (!workspace.settings.universeTags.tags.includes(name)) {
-        workspace.settings.universeTags.tags.push(name);
-    }
-    return name; // Return name as ID since they are strings now
 };
